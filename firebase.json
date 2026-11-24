@@ -1,0 +1,20 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "auth": {
+    "providers": {
+      "anonymous": false,
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "bhaJami",
+        "supportEmail": "pschax@gmail.com",
+        "authorizedRedirectUris": [
+          "https://saibhajanverse.firebaseapp.com/__/auth/handler",
+          "http://localhost:3000"
+        ]
+      }
+    }
+  }
+}

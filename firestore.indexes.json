@@ -1,0 +1,45 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "lyricCorrections",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bhajans",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "deity", "order": "ASCENDING" },
+        { "fieldPath": "title", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bhajans",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "matchStatus", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "bhajans",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "lyricsMissing", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "ingestionRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "source", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

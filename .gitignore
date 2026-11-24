@@ -1,0 +1,17 @@
+node_modules/
+.next/
+dist/
+.expo/
+.env.local
+.env.*.local
+*firebase-adminsdk*.json
+*service-account*.json
+firebase-debug.log*
+firestore-debug.log*
+apps/web/data/*.json
+apps/web/data/uploads/
+tools/catalog-pipeline/.cache/
+tools/catalog-pipeline/*.sqlite*
+tools/catalog-pipeline/*.jsonl
+.DS_Store
+**/.DS_Store

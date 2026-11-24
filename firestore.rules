@@ -1,0 +1,990 @@
+rules_version = '2';
+
+// ============================================================================
+// bhaJami - Sathya Sai Bhajans Studio (Firebase Project: saibhajanverse)
+// Cloud Firestore Security Rules
+// ============================================================================
+//
+// ===============================================================
+// Assumed Data Model (aligned with packages/shared/src/types.ts)
+// ===============================================================
+//
+// Collection: bhajans
+// Document ID: {bhajanId} (string, 1..120 chars)
+// Access: Public read (catalog data, NO PII); Admin-only create/update/delete.
+// Fields (Bhajan schema, admin-managed):
+//   - id: string (optional, 1..120, matches bhajanId)
+//   - slug: string (optional, 1..120)
+//   - title: string (optional, 1..200)
+//   - deity: string | null (optional, <= 120)
+//   - language: string | null (optional, <= 60)
+//   - raga: map (RagaInfo, <= 10 keys) | string (<= 120) | null (optional)
+//   - beat: string | null (optional, <= 60)
+//   - tala: string | null (optional, <= 120)
+//   - tempo: string (<= 60) | number (0..500) | null (optional)
+//   - level: string | null (optional, <= 60)
+//   - gentsPitchRaw / ladiesPitchRaw: string | null (optional, <= 80)
+//   - gentsPitch / ladiesPitch / firstLineNotes: map | null (optional, <= 6 keys)
+//   - notesRange: string | null (optional, <= 120)
+//   - meaning: string | null (optional, <= 5000)
+//   - sheetMusicUrl / sourceUrl: string | null (optional, '' or http(s) URL <= 500)
+//   - metadataSource: string (optional, ['sairhythms_verified', 'local_inferred',
+//       'community_contributed', 'youtube_prasanthi_mandir_live',
+//       'youtube_sss_bhajans', 'admin_curated'])
+//   - isEstimated / lyricsMissing: bool (optional)
+//   - matchStatus: string | null (optional, ['verified', 'needs_verification', 'unmatched'])
+//   - matchCandidates: list | null (optional, <= 10 maps)
+//   - missingFields: list | null (optional, <= 15 strings)
+//   - slugAliases: list | null (optional, <= 50 strings)
+//   - lyricsSets: list (optional, <= 35 maps)
+//   - glossary: list (optional, <= 100 maps)
+//   - recordings: list (optional, <= 150 maps)
+//   - addedRecordings: list | null (optional, <= 150 maps)
+//   - bhajamiOverride / bhajamiNewBhajan: bool | null (optional)
+//   - createdAt: timestamp | ISO string (optional, immutable once set)
+//   - updatedAt: timestamp | ISO string (optional)
+//
+// Subcollection: bhajans/{bhajanId}/revisions
+// Document ID: {revisionId} (string, 1..120 chars)
+// Access: Public read; Admin-only create; Immutable audit log (no update/delete).
+// Fields (BhajanRevision schema, admin-managed):
+//   - id: string (optional, 1..120, matches revisionId)
+//   - bhajanId: string (optional, 1..120)
+//   - correctionId: string (optional, 1..120)
+//   - previousLyrics: list (optional, <= 200 strings)
+//   - newLyrics: list (optional, <= 200 strings)
+//   - script: string (optional, 1..40)
+//   - contributorName: string (optional, 1..120)
+//   - approvedBy: string (optional, 1..254)
+//   - approvedAt: timestamp | ISO string (optional)
+//   - createdAt: timestamp | ISO string (optional)
+//
+// Collection: catalogMeta
+// Document ID: {doc} (e.g., 'latest')
+// Access: Public read (non-PII catalog version/stats manifest); Admin-only write.
+// Fields:
+//   - version: number (required)
+//   - totalBhajans: number (required)
+//   - indexHash: string (required, >= 1)
+//   - shardIds: list (required, <= 100 strings)
+//   - stats: map (required)
+//   - updatedAt: timestamp | ISO string (required)
+//   (total keys <= 15)
+//
+// Collection: catalogIndexShards
+// Document ID: {shardId} (string, 1..120 chars)
+// Access: Public read (non-PII search index entries); Admin-only write.
+// Fields:
+//   - shardId: string (required, matches document ID)
+//   - version: number (required)
+//   - count: number (required)
+//   - entries: list (required, <= 2000 maps)
+//   (total keys <= 10)
+//
+// Collection: entityAliases
+// Document ID: {aliasKey} (string, 1..120 chars)
+// Access: Admin-only read/write.
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - id: string (required, matches aliasKey)
+//   - variantTitle: string (required, 1..240)
+//   - canonicalPhrase: string (required, 1..240)
+//   - targetBhajanId: string (required, 1..120)
+//   - source: string (required, ['admin_merge', 'sairhythms_var', 'seed'])
+//   - createdAt: timestamp | ISO string (required)
+//   - approvedBy: string | null (optional, <= 254)
+//
+// Collection: doNotMergePairs
+// Document ID: {pairHash} (string, 1..250 chars)
+// Access: Admin-only read/write.
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - id: string (required, matches pairHash)
+//   - entityA: string (required, 1..120)
+//   - entityB: string (required, 1..120)
+//   - createdBy: string (required, 1..254)
+//   - createdAt: timestamp | ISO string (required)
+//   - note: string | null (optional, <= 500)
+//
+// Collection: youtubeVideos
+// Document ID: {videoId} (string, 1..120 chars)
+// Access: Admin-only read/write. Raw provenance fields immutable on update.
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - videoId: string (required, matches videoId, immutable)
+//   - channelId: string (required, 1..120, immutable)
+//   - playlistId: string | null (optional, <= 120, immutable)
+//   - rawTitle: string (required, <= 500, immutable)
+//   - rawDescription: string (required, <= 10000, immutable)
+//   - cleanedTitle: string (required, <= 500)
+//   - durationSec: number (required, >= 0)
+//   - publishedAt: timestamp | ISO string (required, immutable)
+//   - classification: string (required, ['single', 'volume', 'ambiguous_long'])
+//   - embeddable: bool (required)
+//   - chapters: list | null (optional, <= 200 maps)
+//   - linkedBhajanIds: list (required, <= 100 strings)
+//   - excluded: bool | null (optional)
+//   - exclusionReason: string | null (optional, <= 500)
+//   - lastVerifiedAt: timestamp | ISO string (required)
+//   - ingestedAt: timestamp | ISO string (required, immutable)
+//
+// Collection: syncState
+// Document ID: {source} (['sairhythms', 'youtube_mandir_live', 'youtube_sss_bhajans'])
+// Access: Admin-only read/write.
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - source: string (required, matches document ID)
+//   - lastRunAt: timestamp | ISO string (required)
+//   - lastPublishedAt: timestamp | ISO string | null (optional)
+//   - watermarkToken: string | null (optional, <= 500)
+//   - itemsIndexedCount: number (required)
+//   - livenessCursorIdx: number | null (optional)
+//
+// Collection: ingestionRuns
+// Document ID: {runId} (string, 1..120 chars)
+// Access: Admin-only read/create; Immutable audit log (no update/delete).
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - runId: string (required, matches runId)
+//   - source: string (required, 1..80)
+//   - startedAt: timestamp | ISO string (required)
+//   - finishedAt: timestamp | ISO string (required)
+//   - status: string (required, ['success', 'partial', 'failed'])
+//   - itemsScanned / matchedAuto / queuedDoubt / createdNew / skippedDuplicate /
+//     parseErrors / youtubeQuotaUnitsUsed / firestoreWrites: number (required)
+//   - errorMessage: string | null (optional, <= 2000)
+//
+// Collection: lyricCorrections
+// Document ID: {correctionId}
+// Access: Create by signed-in non-anonymous users (submitterUid == auth.uid, status == 'pending' only);
+//         Read by admin or original signed-in submitter (submitterUid == auth.uid);
+//         Update by admin, or by original non-anonymous submitter for follow-up
+//           when status in ['info_requested', 'rejected'];
+//         Delete by admin only.
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - bhajanId: string (required, 1..120, immutable)
+//   - bhajanTitle: string (required, 1..200)
+//   - script: string (required, 1..40)
+//   - submissionType: string | null (optional, ['lyric_correction', 'alternate_lyrics', 'new_bhajan', 'metadata_addition'])
+//   - alternateScriptKind: string | null (optional, <= 40)
+//   - originalLyrics: list (required, size <= 200)
+//   - proposedLyrics: list (required, size 0..200)
+//   - proposedMetadata: map | null (optional, ProposedMetadataPatch keys <= 20)
+//   - audioSubmission: map | null (optional, url/label/mimeType/durationSec/sourceKind)
+//   - reasonOrSource: string (required, <= 1000)
+//   - submitterUid: string | null (optional; on create must equal auth.uid; immutable)
+//   - submitterName: string (required, 1..120, immutable)
+//   - submitterEmail: string (required, 3..254, immutable)
+//   - status: string (required, 'pending' on create; ['pending', 'info_requested', 'approved', 'rejected'] on update)
+//   - createdAt: timestamp | ISO string (required, immutable)
+//   - reviewedAt: timestamp | ISO string | null (optional, absent or null on create)
+//   - reviewedBy: string | null (optional, 1..254, absent or null on create)
+//   - reviewNote: string | null (optional, <= 1000, absent or null on create)
+//   - infoRequestedAt: timestamp | ISO string | null (optional, absent or null on create)
+//   - infoRequestNote: string | null (optional, <= 2000, absent or null on create)
+//   - contributorReply: string | null (optional, <= 4000, absent or null on create)
+//   - contributorRepliedAt: timestamp | ISO string | null (optional, absent or null on create)
+//
+// Collection: users
+// Document ID: {userId} (must match request.auth.uid)
+// Access: Strict owner-only read/create/update/delete. No admin/role flags allowed.
+// Fields (strictly enforced via hasOnly):
+//   - uid: string (optional, must equal userId, immutable)
+//   - email: string | null (optional, 3..254)
+//   - displayName: string | null (optional, 1..120)
+//   - photoURL: string | null (optional, valid http/https URL, <= 500)
+//   - preferredScript: string (optional, 1..40)
+//   - favorites: list (optional, <= 500 items)
+//   - preferences: map (optional, strictly bounded keys/types)
+//   - createdAt: timestamp | ISO string (optional, immutable once set)
+//   - updatedAt: timestamp | ISO string (optional)
+//   - lastLoginAt: timestamp | ISO string (optional)
+//
+// Subcollection: users/{userId}/setlists
+// Document ID: {setlistId}
+// Access: Strict owner-only read/create/update/delete.
+// Fields (strictly enforced via hasOnly + hasAll):
+//   - id: string (optional, must equal setlistId, immutable)
+//   - ownerUid: string (optional, must equal userId, immutable)
+//   - title: string (required, 1..150)
+//   - description: string | null (optional, <= 1000)
+//   - bhajanIds: list (optional, <= 200 items)
+//   - items: list (optional, <= 200 items)
+//   - script: string (optional, 1..40)
+//   - occasion: string | null (optional, <= 120)
+//   - isArchived: bool (optional)
+//   - createdAt: timestamp | ISO string (required, immutable)
+//   - updatedAt: timestamp | ISO string (optional)
+//
+// Collection: mail
+// Document ID: {mailId}
+// Access: Completely denied to clients (written exclusively via Admin SDK / Cloud Functions).
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the user is authenticated with a non-anonymous provider
+    function isNonAnonymousAuth() {
+      return request.auth != null &&
+        request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // Check if the user is an authorized studio admin
+    function isAdmin() {
+      return request.auth != null &&
+        (request.auth.token.admin == true ||
+         (request.auth.token.email == 'pschax@gmail.com' &&
+          request.auth.token.email_verified == true));
+    }
+
+    // Check if the authenticated user owns the document path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Validate required fields exist
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate that the document contains only the allowed fields
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate that immutable fields were not added, removed, or modified on update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validate URL format (must start with https:// or http://)
+    function isValidUrl(url) {
+      return url is string &&
+        url.size() >= 8 &&
+        url.size() <= 500 &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // Validate Firestore timestamp or ISO 8601 date string
+    function isValidTimestampOrIso(val) {
+      return val is timestamp ||
+        (val is string &&
+         val.size() >= 10 &&
+         val.size() <= 64 &&
+         val.matches("^\\d{4}-\\d{2}-\\d{2}.*"));
+    }
+
+    // Validate optional nullable string with length bounds
+    function isOptionalNullableString(data, field, minLen, maxLen) {
+      return !(field in data) ||
+        data[field] == null ||
+        (data[field] is string &&
+         data[field].size() >= minLen &&
+         data[field].size() <= maxLen);
+    }
+
+    // Validate optional string (non-null when present) with length bounds
+    function isOptionalString(data, field, minLen, maxLen) {
+      return !(field in data) ||
+        (data[field] is string &&
+         data[field].size() >= minLen &&
+         data[field].size() <= maxLen);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidBhajan(data, bhajanId) {
+      return bhajanId.size() >= 1 &&
+        bhajanId.size() <= 120 &&
+        data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 60 &&
+        (!('id' in data) || (data.id is string && data.id == bhajanId)) &&
+        isOptionalString(data, 'slug', 1, 120) &&
+        isOptionalString(data, 'title', 1, 200) &&
+        isOptionalNullableString(data, 'deity', 0, 120) &&
+        isOptionalNullableString(data, 'language', 0, 60) &&
+        (!('raga' in data) || data.raga == null ||
+          (data.raga is string && data.raga.size() <= 120) ||
+          (data.raga is map && data.raga.keys().size() <= 10)) &&
+        isOptionalNullableString(data, 'beat', 0, 60) &&
+        isOptionalNullableString(data, 'tala', 0, 120) &&
+        (!('tempo' in data) || data.tempo == null ||
+          (data.tempo is string && data.tempo.size() <= 60) ||
+          (data.tempo is number && data.tempo >= 0 && data.tempo <= 500)) &&
+        isOptionalNullableString(data, 'level', 0, 60) &&
+        isOptionalNullableString(data, 'gentsPitchRaw', 0, 80) &&
+        isOptionalNullableString(data, 'ladiesPitchRaw', 0, 80) &&
+        (!('gentsPitch' in data) || data.gentsPitch == null ||
+          (data.gentsPitch is map && data.gentsPitch.keys().size() <= 6)) &&
+        (!('ladiesPitch' in data) || data.ladiesPitch == null ||
+          (data.ladiesPitch is map && data.ladiesPitch.keys().size() <= 6)) &&
+        (!('firstLineNotes' in data) || data.firstLineNotes == null ||
+          (data.firstLineNotes is map && data.firstLineNotes.keys().size() <= 6)) &&
+        isOptionalNullableString(data, 'notesRange', 0, 120) &&
+        isOptionalNullableString(data, 'meaning', 0, 5000) &&
+        (!('sheetMusicUrl' in data) || data.sheetMusicUrl == null ||
+          data.sheetMusicUrl == '' || isValidUrl(data.sheetMusicUrl)) &&
+        (!('sourceUrl' in data) || data.sourceUrl == null ||
+          data.sourceUrl == '' || isValidUrl(data.sourceUrl)) &&
+        (!('metadataSource' in data) ||
+          (data.metadataSource is string &&
+           data.metadataSource in [
+             'sairhythms_verified',
+             'local_inferred',
+             'community_contributed',
+             'youtube_prasanthi_mandir_live',
+             'youtube_sss_bhajans',
+             'admin_curated'
+           ])) &&
+        (!('isEstimated' in data) || data.isEstimated is bool) &&
+        (!('lyricsMissing' in data) || data.lyricsMissing is bool) &&
+        (!('matchStatus' in data) || data.matchStatus == null ||
+          (data.matchStatus is string &&
+           data.matchStatus in ['verified', 'needs_verification', 'unmatched'])) &&
+        (!('matchCandidates' in data) || data.matchCandidates == null ||
+          (data.matchCandidates is list && data.matchCandidates.size() <= 10 &&
+           (data.matchCandidates.size() == 0 || data.matchCandidates[0] is map))) &&
+        (!('missingFields' in data) || data.missingFields == null ||
+          (data.missingFields is list && data.missingFields.size() <= 15 &&
+           (data.missingFields.size() == 0 || data.missingFields[0] is string))) &&
+        (!('slugAliases' in data) || data.slugAliases == null ||
+          (data.slugAliases is list && data.slugAliases.size() <= 50 &&
+           (data.slugAliases.size() == 0 || data.slugAliases[0] is string))) &&
+        (!('lyricsSets' in data) ||
+          (data.lyricsSets is list && data.lyricsSets.size() <= 35 &&
+           (data.lyricsSets.size() == 0 || data.lyricsSets[0] is map))) &&
+        (!('glossary' in data) ||
+          (data.glossary is list && data.glossary.size() <= 100 &&
+           (data.glossary.size() == 0 || data.glossary[0] is map))) &&
+        (!('recordings' in data) ||
+          (data.recordings is list && data.recordings.size() <= 150 &&
+           (data.recordings.size() == 0 || data.recordings[0] is map))) &&
+        (!('addedRecordings' in data) || data.addedRecordings == null ||
+          (data.addedRecordings is list && data.addedRecordings.size() <= 150 &&
+           (data.addedRecordings.size() == 0 || data.addedRecordings[0] is map))) &&
+        (!('bhajamiOverride' in data) || data.bhajamiOverride == null ||
+          data.bhajamiOverride is bool) &&
+        (!('bhajamiNewBhajan' in data) || data.bhajamiNewBhajan == null ||
+          data.bhajamiNewBhajan is bool) &&
+        (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt)) &&
+        (!('updatedAt' in data) || isValidTimestampOrIso(data.updatedAt));
+    }
+
+    function isValidBhajanRevision(data, revisionId) {
+      return revisionId.size() >= 1 &&
+        revisionId.size() <= 120 &&
+        data is map &&
+        data.keys().size() >= 1 &&
+        data.keys().size() <= 30 &&
+        (!('id' in data) || (data.id is string && data.id == revisionId)) &&
+        isOptionalString(data, 'bhajanId', 1, 120) &&
+        isOptionalString(data, 'correctionId', 1, 120) &&
+        (!('previousLyrics' in data) ||
+          (data.previousLyrics is list && data.previousLyrics.size() <= 200 &&
+           (data.previousLyrics.size() == 0 || data.previousLyrics[0] is string))) &&
+        (!('newLyrics' in data) ||
+          (data.newLyrics is list && data.newLyrics.size() <= 200 &&
+           (data.newLyrics.size() == 0 || data.newLyrics[0] is string))) &&
+        isOptionalNullableString(data, 'script', 1, 40) &&
+        isOptionalNullableString(data, 'contributorName', 1, 120) &&
+        isOptionalNullableString(data, 'approvedBy', 1, 254) &&
+        (!('approvedAt' in data) || isValidTimestampOrIso(data.approvedAt)) &&
+        (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt));
+    }
+
+    function isValidProposedMetadata(meta) {
+      return meta is map &&
+        meta.keys().size() <= 20 &&
+        meta.keys().hasOnly([
+          'title', 'deity', 'raga', 'ragaName', 'arohanam', 'avarohanam',
+          'tala', 'beat', 'tempo', 'gentsPitchRaw', 'ladiesPitchRaw', 'pitch',
+          'firstLineSargam', 'firstLineWestern', 'notesRange', 'sheetMusicUrl',
+          'language', 'category', 'meaning', 'notes'
+        ]) &&
+        isOptionalNullableString(meta, 'title', 1, 200) &&
+        isOptionalNullableString(meta, 'deity', 0, 120) &&
+        isOptionalNullableString(meta, 'raga', 0, 120) &&
+        isOptionalNullableString(meta, 'ragaName', 0, 120) &&
+        isOptionalNullableString(meta, 'arohanam', 0, 200) &&
+        isOptionalNullableString(meta, 'avarohanam', 0, 200) &&
+        isOptionalNullableString(meta, 'tala', 0, 120) &&
+        isOptionalNullableString(meta, 'beat', 0, 60) &&
+        (!('tempo' in meta) || meta.tempo == null ||
+          (meta.tempo is string && meta.tempo.size() <= 60) ||
+          (meta.tempo is number && meta.tempo >= 0 && meta.tempo <= 500)) &&
+        isOptionalNullableString(meta, 'gentsPitchRaw', 0, 60) &&
+        isOptionalNullableString(meta, 'ladiesPitchRaw', 0, 60) &&
+        isOptionalNullableString(meta, 'pitch', 0, 60) &&
+        isOptionalNullableString(meta, 'firstLineSargam', 0, 500) &&
+        isOptionalNullableString(meta, 'firstLineWestern', 0, 500) &&
+        isOptionalNullableString(meta, 'notesRange', 0, 120) &&
+        (!('sheetMusicUrl' in meta) || meta.sheetMusicUrl == null ||
+          meta.sheetMusicUrl == '' || isValidUrl(meta.sheetMusicUrl)) &&
+        isOptionalNullableString(meta, 'language', 0, 60) &&
+        isOptionalNullableString(meta, 'category', 0, 120) &&
+        isOptionalNullableString(meta, 'meaning', 0, 2000) &&
+        isOptionalNullableString(meta, 'notes', 0, 2000);
+    }
+
+    function isValidAudioSubmission(audio) {
+      return audio is map &&
+        audio.keys().hasOnly(['url', 'label', 'mimeType', 'durationSec', 'sourceKind']) &&
+        'url' in audio &&
+        audio.url is string &&
+        audio.url.size() >= 1 &&
+        audio.url.size() <= 1000 &&
+        (audio.url.matches("^https://.*") ||
+         audio.url.matches("^http://.*") ||
+         audio.url.matches("^/api/uploaded-audio\\?file=.*")) &&
+        'label' in audio &&
+        audio.label is string &&
+        audio.label.size() <= 200 &&
+        isOptionalNullableString(audio, 'mimeType', 0, 80) &&
+        (!('durationSec' in audio) || audio.durationSec == null ||
+          (audio.durationSec is number && audio.durationSec >= 0 && audio.durationSec <= 7200)) &&
+        (!('sourceKind' in audio) || audio.sourceKind == null ||
+          (audio.sourceKind is string && audio.sourceKind in ['uploaded_file', 'external_url']));
+    }
+
+    function isValidLyricCorrection(data) {
+      let allowedKeys = [
+        'bhajanId',
+        'bhajanTitle',
+        'script',
+        'submissionType',
+        'alternateScriptKind',
+        'originalLyrics',
+        'proposedLyrics',
+        'proposedMetadata',
+        'audioSubmission',
+        'reasonOrSource',
+        'submitterUid',
+        'submitterName',
+        'submitterEmail',
+        'status',
+        'createdAt',
+        'reviewedAt',
+        'reviewedBy',
+        'reviewNote',
+        'infoRequestedAt',
+        'infoRequestNote',
+        'contributorReply',
+        'contributorRepliedAt'
+      ];
+      let requiredKeys = [
+        'bhajanId',
+        'bhajanTitle',
+        'script',
+        'originalLyrics',
+        'proposedLyrics',
+        'reasonOrSource',
+        'submitterName',
+        'submitterEmail',
+        'status',
+        'createdAt'
+      ];
+
+      return hasOnlyAllowedFields(allowedKeys) &&
+        hasRequiredFields(requiredKeys) &&
+        data.bhajanId is string && data.bhajanId.size() >= 1 && data.bhajanId.size() <= 120 &&
+        data.bhajanTitle is string && data.bhajanTitle.size() >= 1 && data.bhajanTitle.size() <= 200 &&
+        data.script is string && data.script.size() >= 1 && data.script.size() <= 40 &&
+        (!('submissionType' in data) || data.submissionType == null ||
+          (data.submissionType is string &&
+           data.submissionType in ['lyric_correction', 'alternate_lyrics', 'new_bhajan', 'metadata_addition'])) &&
+        isOptionalNullableString(data, 'alternateScriptKind', 0, 40) &&
+        data.originalLyrics is list && data.originalLyrics.size() <= 200 &&
+        (data.originalLyrics.size() == 0 || data.originalLyrics[0] is string) &&
+        data.proposedLyrics is list && data.proposedLyrics.size() >= 0 && data.proposedLyrics.size() <= 200 &&
+        (data.proposedLyrics.size() == 0 || data.proposedLyrics[0] is string) &&
+        (!('proposedMetadata' in data) || data.proposedMetadata == null || isValidProposedMetadata(data.proposedMetadata)) &&
+        (!('audioSubmission' in data) || data.audioSubmission == null || isValidAudioSubmission(data.audioSubmission)) &&
+        data.reasonOrSource is string && data.reasonOrSource.size() <= 1000 &&
+        isOptionalNullableString(data, 'submitterUid', 1, 128) &&
+        data.submitterName is string && data.submitterName.size() >= 1 && data.submitterName.size() <= 120 &&
+        data.submitterEmail is string && data.submitterEmail.size() >= 3 && data.submitterEmail.size() <= 254 &&
+        data.status is string && data.status in ['pending', 'info_requested', 'approved', 'rejected'] &&
+        isValidTimestampOrIso(data.createdAt) &&
+        (!('reviewedAt' in data) || data.reviewedAt == null || isValidTimestampOrIso(data.reviewedAt)) &&
+        isOptionalNullableString(data, 'reviewedBy', 1, 254) &&
+        isOptionalNullableString(data, 'reviewNote', 0, 1000) &&
+        (!('infoRequestedAt' in data) || data.infoRequestedAt == null || isValidTimestampOrIso(data.infoRequestedAt)) &&
+        isOptionalNullableString(data, 'infoRequestNote', 0, 2000) &&
+        isOptionalNullableString(data, 'contributorReply', 0, 4000) &&
+        (!('contributorRepliedAt' in data) || data.contributorRepliedAt == null || isValidTimestampOrIso(data.contributorRepliedAt));
+    }
+
+    function isValidYouTubeVideoDoc(data, videoId) {
+      let requiredKeys = [
+        'videoId',
+        'channelId',
+        'rawTitle',
+        'rawDescription',
+        'cleanedTitle',
+        'durationSec',
+        'publishedAt',
+        'classification',
+        'embeddable',
+        'linkedBhajanIds',
+        'lastVerifiedAt',
+        'ingestedAt'
+      ];
+      let allowedKeys = [
+        'videoId',
+        'channelId',
+        'playlistId',
+        'rawTitle',
+        'rawDescription',
+        'cleanedTitle',
+        'durationSec',
+        'publishedAt',
+        'classification',
+        'embeddable',
+        'chapters',
+        'linkedBhajanIds',
+        'excluded',
+        'exclusionReason',
+        'lastVerifiedAt',
+        'ingestedAt'
+      ];
+
+      return videoId.size() >= 1 &&
+        videoId.size() <= 120 &&
+        data is map &&
+        data.keys().hasAll(requiredKeys) &&
+        data.keys().hasOnly(allowedKeys) &&
+        data.videoId is string &&
+        data.videoId == videoId &&
+        data.channelId is string &&
+        data.channelId.size() >= 1 &&
+        data.channelId.size() <= 120 &&
+        isOptionalNullableString(data, 'playlistId', 0, 120) &&
+        data.rawTitle is string &&
+        data.rawTitle.size() <= 500 &&
+        data.rawDescription is string &&
+        data.rawDescription.size() <= 10000 &&
+        data.cleanedTitle is string &&
+        data.cleanedTitle.size() <= 500 &&
+        data.durationSec is number &&
+        data.durationSec >= 0 &&
+        isValidTimestampOrIso(data.publishedAt) &&
+        data.classification is string &&
+        data.classification in ['single', 'volume', 'ambiguous_long'] &&
+        data.embeddable is bool &&
+        (!('chapters' in data) || data.chapters == null ||
+          (data.chapters is list && data.chapters.size() <= 200 &&
+           (data.chapters.size() == 0 || data.chapters[0] is map))) &&
+        data.linkedBhajanIds is list &&
+        data.linkedBhajanIds.size() <= 100 &&
+        (data.linkedBhajanIds.size() == 0 || data.linkedBhajanIds[0] is string) &&
+        (!('excluded' in data) || data.excluded == null || data.excluded is bool) &&
+        isOptionalNullableString(data, 'exclusionReason', 0, 500) &&
+        isValidTimestampOrIso(data.lastVerifiedAt) &&
+        isValidTimestampOrIso(data.ingestedAt);
+    }
+
+    function isValidUserPreferences(prefs) {
+      return prefs is map &&
+        prefs.keys().size() <= 15 &&
+        prefs.keys().hasOnly([
+          'theme',
+          'fontSize',
+          'preferredScript',
+          'showMeaning',
+          'showTransliteration',
+          'showChordHints',
+          'autoScrollSpeed',
+          'compactView'
+        ]) &&
+        isOptionalString(prefs, 'theme', 1, 40) &&
+        (!('fontSize' in prefs) || (prefs.fontSize is number && prefs.fontSize >= 8 && prefs.fontSize <= 72)) &&
+        isOptionalString(prefs, 'preferredScript', 1, 40) &&
+        (!('showMeaning' in prefs) || prefs.showMeaning is bool) &&
+        (!('showTransliteration' in prefs) || prefs.showTransliteration is bool) &&
+        (!('showChordHints' in prefs) || prefs.showChordHints is bool) &&
+        (!('autoScrollSpeed' in prefs) || (prefs.autoScrollSpeed is number && prefs.autoScrollSpeed >= 0 && prefs.autoScrollSpeed <= 10)) &&
+        (!('compactView' in prefs) || prefs.compactView is bool);
+    }
+
+    function isValidUser(data, userId) {
+      let allowedKeys = [
+        'uid',
+        'email',
+        'displayName',
+        'photoURL',
+        'preferredScript',
+        'favorites',
+        'preferences',
+        'createdAt',
+        'updatedAt',
+        'lastLoginAt'
+      ];
+      let forbiddenPrivilegeKeys = [
+        'admin',
+        'isAdmin',
+        'role',
+        'roles',
+        'permissions',
+        'claims',
+        'customClaims',
+        'isModerator',
+        'moderator',
+        'staff'
+      ];
+
+      return hasOnlyAllowedFields(allowedKeys) &&
+        !data.keys().hasAny(forbiddenPrivilegeKeys) &&
+        data.keys().size() <= 10 &&
+        (!('uid' in data) || (data.uid is string && data.uid == userId)) &&
+        isOptionalNullableString(data, 'email', 3, 254) &&
+        isOptionalNullableString(data, 'displayName', 1, 120) &&
+        (!('photoURL' in data) || data.photoURL == null || isValidUrl(data.photoURL)) &&
+        isOptionalString(data, 'preferredScript', 1, 40) &&
+        (!('favorites' in data) || (data.favorites is list && data.favorites.size() <= 500 &&
+          (data.favorites.size() == 0 || data.favorites[0] is string))) &&
+        (!('preferences' in data) || isValidUserPreferences(data.preferences)) &&
+        (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt)) &&
+        (!('updatedAt' in data) || isValidTimestampOrIso(data.updatedAt)) &&
+        (!('lastLoginAt' in data) || isValidTimestampOrIso(data.lastLoginAt));
+    }
+
+    function isValidSetlist(data, userId, setlistId) {
+      let allowedKeys = [
+        'id',
+        'ownerUid',
+        'title',
+        'description',
+        'bhajanIds',
+        'items',
+        'script',
+        'occasion',
+        'isArchived',
+        'createdAt',
+        'updatedAt'
+      ];
+
+      return hasOnlyAllowedFields(allowedKeys) &&
+        hasRequiredFields(['title', 'createdAt']) &&
+        (!('id' in data) || (data.id is string && data.id == setlistId)) &&
+        (!('ownerUid' in data) || (data.ownerUid is string && data.ownerUid == userId)) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 150 &&
+        isOptionalNullableString(data, 'description', 0, 1000) &&
+        (!('bhajanIds' in data) || (data.bhajanIds is list && data.bhajanIds.size() <= 200 &&
+          (data.bhajanIds.size() == 0 || data.bhajanIds[0] is string))) &&
+        (!('items' in data) || (data.items is list && data.items.size() <= 200 &&
+          (data.items.size() == 0 || data.items[0] is map))) &&
+        isOptionalString(data, 'script', 1, 40) &&
+        isOptionalNullableString(data, 'occasion', 0, 120) &&
+        (!('isArchived' in data) || data.isArchived is bool) &&
+        isValidTimestampOrIso(data.createdAt) &&
+        (!('updatedAt' in data) || isValidTimestampOrIso(data.updatedAt));
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Public Sathya Sai Bhajans catalog (no PII); writes restricted to admins
+    match /bhajans/{bhajanId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidBhajan(request.resource.data, bhajanId);
+      allow update: if isAdmin() &&
+        isValidBhajan(request.resource.data, bhajanId) &&
+        (!('createdAt' in resource.data) || areImmutableFieldsUnchanged(['createdAt']));
+      allow delete: if isAdmin();
+
+      // Immutable audit log of bhajan catalog revisions
+      match /revisions/{revisionId} {
+        allow read: if true;
+        allow create: if isAdmin() && isValidBhajanRevision(request.resource.data, revisionId);
+        allow update, delete: if false;
+      }
+    }
+
+    // Public catalog version/stats manifest (no PII); writes restricted to admins
+    match /catalogMeta/{doc} {
+      allow read: if true;
+      allow create, update: if isAdmin() &&
+        doc.size() >= 1 &&
+        doc.size() <= 120 &&
+        request.resource.data is map &&
+        request.resource.data.keys().hasAll([
+          'version', 'totalBhajans', 'indexHash', 'shardIds', 'stats', 'updatedAt'
+        ]) &&
+        request.resource.data.keys().size() <= 15 &&
+        request.resource.data.version is number &&
+        request.resource.data.totalBhajans is number &&
+        request.resource.data.indexHash is string &&
+        request.resource.data.indexHash.size() >= 1 &&
+        request.resource.data.indexHash.size() <= 256 &&
+        request.resource.data.shardIds is list &&
+        request.resource.data.shardIds.size() <= 100 &&
+        (request.resource.data.shardIds.size() == 0 ||
+          request.resource.data.shardIds[0] is string) &&
+        request.resource.data.stats is map &&
+        request.resource.data.stats.keys().size() <= 30 &&
+        isValidTimestampOrIso(request.resource.data.updatedAt);
+      allow delete: if isAdmin();
+    }
+
+    // Public bounded search index shards (no PII); writes restricted to admins
+    match /catalogIndexShards/{shardId} {
+      allow read: if true;
+      allow create, update: if isAdmin() &&
+        shardId.size() >= 1 &&
+        shardId.size() <= 120 &&
+        request.resource.data is map &&
+        request.resource.data.keys().hasAll(['shardId', 'version', 'count', 'entries']) &&
+        request.resource.data.keys().size() <= 10 &&
+        request.resource.data.shardId is string &&
+        request.resource.data.shardId == shardId &&
+        request.resource.data.version is number &&
+        request.resource.data.count is number &&
+        request.resource.data.entries is list &&
+        request.resource.data.entries.size() <= 2000 &&
+        (request.resource.data.entries.size() == 0 ||
+          request.resource.data.entries[0] is map);
+      allow delete: if isAdmin();
+    }
+
+    // Curated canonical entity aliases (admin-only)
+    match /entityAliases/{aliasKey} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() &&
+        aliasKey.size() >= 1 &&
+        aliasKey.size() <= 120 &&
+        request.resource.data is map &&
+        request.resource.data.keys().hasAll([
+          'id', 'variantTitle', 'canonicalPhrase', 'targetBhajanId', 'source', 'createdAt'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'variantTitle', 'canonicalPhrase', 'targetBhajanId', 'source', 'createdAt', 'approvedBy'
+        ]) &&
+        request.resource.data.id is string &&
+        request.resource.data.id == aliasKey &&
+        request.resource.data.variantTitle is string &&
+        request.resource.data.variantTitle.size() >= 1 &&
+        request.resource.data.variantTitle.size() <= 240 &&
+        request.resource.data.canonicalPhrase is string &&
+        request.resource.data.canonicalPhrase.size() >= 1 &&
+        request.resource.data.canonicalPhrase.size() <= 240 &&
+        request.resource.data.targetBhajanId is string &&
+        request.resource.data.targetBhajanId.size() >= 1 &&
+        request.resource.data.targetBhajanId.size() <= 120 &&
+        request.resource.data.source is string &&
+        request.resource.data.source in ['admin_merge', 'sairhythms_var', 'seed'] &&
+        isValidTimestampOrIso(request.resource.data.createdAt) &&
+        isOptionalNullableString(request.resource.data, 'approvedBy', 0, 254);
+      allow delete: if isAdmin();
+    }
+
+    // Explicit negative-match guards preventing auto-merge of distinct bhajans (admin-only)
+    match /doNotMergePairs/{pairHash} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() &&
+        pairHash.size() >= 1 &&
+        pairHash.size() <= 250 &&
+        request.resource.data is map &&
+        request.resource.data.keys().hasAll([
+          'id', 'entityA', 'entityB', 'createdBy', 'createdAt'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'entityA', 'entityB', 'createdBy', 'createdAt', 'note'
+        ]) &&
+        request.resource.data.id is string &&
+        request.resource.data.id == pairHash &&
+        request.resource.data.entityA is string &&
+        request.resource.data.entityA.size() >= 1 &&
+        request.resource.data.entityA.size() <= 120 &&
+        request.resource.data.entityB is string &&
+        request.resource.data.entityB.size() >= 1 &&
+        request.resource.data.entityB.size() <= 120 &&
+        request.resource.data.createdBy is string &&
+        request.resource.data.createdBy.size() >= 1 &&
+        request.resource.data.createdBy.size() <= 254 &&
+        isValidTimestampOrIso(request.resource.data.createdAt) &&
+        isOptionalNullableString(request.resource.data, 'note', 0, 500);
+      allow delete: if isAdmin();
+    }
+
+    // Ingested YouTube video provenance & embed liveness tracking (admin-only)
+    match /youtubeVideos/{videoId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidYouTubeVideoDoc(request.resource.data, videoId);
+      allow update: if isAdmin() &&
+        isValidYouTubeVideoDoc(request.resource.data, videoId) &&
+        areImmutableFieldsUnchanged([
+          'videoId',
+          'channelId',
+          'playlistId',
+          'rawTitle',
+          'rawDescription',
+          'publishedAt',
+          'ingestedAt'
+        ]);
+      allow delete: if isAdmin();
+    }
+
+    // Incremental ingestion watermarks per source (admin-only)
+    match /syncState/{source} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() &&
+        source in ['sairhythms', 'youtube_mandir_live', 'youtube_sss_bhajans'] &&
+        request.resource.data is map &&
+        request.resource.data.keys().hasAll(['source', 'lastRunAt', 'itemsIndexedCount']) &&
+        request.resource.data.keys().hasOnly([
+          'source', 'lastRunAt', 'lastPublishedAt', 'watermarkToken', 'itemsIndexedCount', 'livenessCursorIdx'
+        ]) &&
+        request.resource.data.source is string &&
+        request.resource.data.source == source &&
+        isValidTimestampOrIso(request.resource.data.lastRunAt) &&
+        (!('lastPublishedAt' in request.resource.data) ||
+          request.resource.data.lastPublishedAt == null ||
+          isValidTimestampOrIso(request.resource.data.lastPublishedAt)) &&
+        isOptionalNullableString(request.resource.data, 'watermarkToken', 0, 500) &&
+        request.resource.data.itemsIndexedCount is number &&
+        (!('livenessCursorIdx' in request.resource.data) ||
+          request.resource.data.livenessCursorIdx == null ||
+          request.resource.data.livenessCursorIdx is number);
+      allow delete: if isAdmin();
+    }
+
+    // Immutable ingestion run telemetry & audit logs (admin-only create/read)
+    match /ingestionRuns/{runId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        runId.size() >= 1 &&
+        runId.size() <= 120 &&
+        request.resource.data is map &&
+        request.resource.data.keys().hasAll([
+          'runId', 'source', 'startedAt', 'finishedAt', 'status',
+          'itemsScanned', 'matchedAuto', 'queuedDoubt', 'createdNew',
+          'skippedDuplicate', 'parseErrors', 'youtubeQuotaUnitsUsed', 'firestoreWrites'
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          'runId', 'source', 'startedAt', 'finishedAt', 'status',
+          'itemsScanned', 'matchedAuto', 'queuedDoubt', 'createdNew',
+          'skippedDuplicate', 'parseErrors', 'youtubeQuotaUnitsUsed', 'firestoreWrites',
+          'errorMessage'
+        ]) &&
+        request.resource.data.runId is string &&
+        request.resource.data.runId == runId &&
+        request.resource.data.source is string &&
+        request.resource.data.source.size() >= 1 &&
+        request.resource.data.source.size() <= 80 &&
+        request.resource.data.status is string &&
+        request.resource.data.status in ['success', 'partial', 'failed'] &&
+        isValidTimestampOrIso(request.resource.data.startedAt) &&
+        isValidTimestampOrIso(request.resource.data.finishedAt) &&
+        request.resource.data.itemsScanned is number &&
+        request.resource.data.matchedAuto is number &&
+        request.resource.data.queuedDoubt is number &&
+        request.resource.data.createdNew is number &&
+        request.resource.data.skippedDuplicate is number &&
+        request.resource.data.parseErrors is number &&
+        request.resource.data.youtubeQuotaUnitsUsed is number &&
+        request.resource.data.firestoreWrites is number &&
+        isOptionalNullableString(request.resource.data, 'errorMessage', 0, 2000);
+      allow update, delete: if false;
+    }
+
+    // Crowd-sourced lyric & metadata corrections workflow
+    match /lyricCorrections/{correctionId} {
+      allow read: if isAdmin() ||
+        (isAuthenticated() && resource.data.submitterUid == request.auth.uid);
+
+      allow create: if isValidLyricCorrection(request.resource.data) &&
+        isNonAnonymousAuth() &&
+        request.resource.data.submitterUid == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        (!('reviewedAt' in request.resource.data) || request.resource.data.reviewedAt == null) &&
+        (!('reviewedBy' in request.resource.data) || request.resource.data.reviewedBy == null) &&
+        (!('reviewNote' in request.resource.data) || request.resource.data.reviewNote == null) &&
+        (!('infoRequestedAt' in request.resource.data) || request.resource.data.infoRequestedAt == null) &&
+        (!('infoRequestNote' in request.resource.data) || request.resource.data.infoRequestNote == null) &&
+        (!('contributorReply' in request.resource.data) || request.resource.data.contributorReply == null) &&
+        (!('contributorRepliedAt' in request.resource.data) || request.resource.data.contributorRepliedAt == null);
+
+      allow update: if isValidLyricCorrection(request.resource.data) &&
+        areImmutableFieldsUnchanged([
+          'bhajanId',
+          'submitterName',
+          'submitterEmail',
+          'createdAt'
+        ]) &&
+        ((!('submitterUid' in resource.data) && !('submitterUid' in request.resource.data)) ||
+         (('submitterUid' in resource.data) && ('submitterUid' in request.resource.data) &&
+          resource.data.submitterUid == request.resource.data.submitterUid)) &&
+        (
+          (isAdmin() &&
+           request.resource.data.status in ['pending', 'info_requested', 'approved', 'rejected']) ||
+          (isNonAnonymousAuth() &&
+           'submitterUid' in resource.data &&
+           resource.data.submitterUid == request.auth.uid &&
+           resource.data.status in ['info_requested', 'rejected'] &&
+           request.resource.data.status in ['info_requested', 'rejected', 'pending'] &&
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+             'contributorReply',
+             'contributorRepliedAt',
+             'status',
+             'proposedLyrics',
+             'audioSubmission'
+           ]) &&
+           areImmutableFieldsUnchanged([
+             'reviewedAt',
+             'reviewedBy',
+             'reviewNote',
+             'infoRequestedAt',
+             'infoRequestNote'
+           ]) &&
+           request.resource.data.contributorReply is string &&
+           request.resource.data.contributorReply.size() >= 1 &&
+           request.resource.data.contributorReply.size() <= 4000 &&
+           'contributorRepliedAt' in request.resource.data &&
+           request.resource.data.contributorRepliedAt != null)
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    // Private user profiles and personal bhajan setlists (strict owner-only isolation)
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data, userId);
+      allow update: if isOwner(userId) &&
+        isValidUser(request.resource.data, userId) &&
+        areImmutableFieldsUnchanged(['uid', 'createdAt']);
+      allow delete: if isOwner(userId);
+
+      match /setlists/{setlistId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+          isValidSetlist(request.resource.data, userId, setlistId);
+        allow update: if isOwner(userId) &&
+          isValidSetlist(request.resource.data, userId, setlistId) &&
+          areImmutableFieldsUnchanged(['id', 'ownerUid', 'createdAt']);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Outbound email queue (written exclusively by Admin SDK / Cloud Functions)
+    match /mail/{mailId} {
+      allow read, write: if false;
+    }
+
+    // Explicit default deny for all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

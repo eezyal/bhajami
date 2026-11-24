@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "bhaJami",
+    "slug": "bhajami",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "bhajami",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.saibhajanverse.bhajami"
+    },
+    "android": {
+      "package": "com.saibhajanverse.bhajami"
+    },
+    "plugins": [
+      "expo-av"
+    ],
+    "extra": {
+      "firebaseProjectId": "saibhajanverse"
+    }
+  }
+}
