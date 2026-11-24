@@ -1,25 +1,48 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { AudioSubmissionInfo, ProposedMetadataPatch } from '@bhajami/shared';
 import {
-  getCorrectionById,
+  getCorrectionByIdWithCloud,
   reviewCorrection,
   submitContributorFollowup,
 } from '@/lib/catalog-store';
+import { ADMIN_EMAIL } from '@/lib/email';
+import {
+  extractBearerToken,
+  verifyAdminBearerToken,
+  verifyUserBearerToken,
+} from '@/lib/firebase-admin';
+import { hasCloudConfig } from '@/lib/firestore-rest';
+import { logEvent } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function extractToken(request: NextRequest): string | null {
-  const authHeader = request.headers.get('authorization');
-  return authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() || null : null;
-}
-
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
   const { id } = await context.params;
-  const correction = getCorrectionById(id);
+  const authHeader = request.headers.get('authorization');
+
+  if (hasCloudConfig()) {
+    const auth = await verifyUserBearerToken(authHeader);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error, code: auth.code }, { status: auth.status });
+    }
+    const correction = await getCorrectionByIdWithCloud(id, auth.token);
+    if (!correction) {
+      return NextResponse.json({ error: 'Correction not found.' }, { status: 404 });
+    }
+    if (!auth.user.isAdmin && correction.submitterUid !== auth.user.uid) {
+      return NextResponse.json(
+        { error: 'You do not have permission to view this submission.' },
+        { status: 403 },
+      );
+    }
+    return NextResponse.json({ correction });
+  }
+
+  const correction = await getCorrectionByIdWithCloud(id);
   if (!correction) {
     return NextResponse.json({ error: 'Correction not found.' }, { status: 404 });
   }
@@ -32,6 +55,7 @@ export async function PATCH(
 ) {
   try {
     const { id } = await context.params;
+    const authHeader = request.headers.get('authorization');
     const body = (await request.json()) as {
       action?: 'approve' | 'request_info' | 'reject' | 'submit_followup';
       reviewNote?: string;
@@ -43,7 +67,8 @@ export async function PATCH(
       reviewerEmail?: string;
     };
 
-    const idToken = extractToken(request);
+    const cloud = hasCloudConfig();
+    let idToken: string | null = extractBearerToken(authHeader);
 
     if (body.action === 'submit_followup') {
       const reply = (body.contributorReply || '').trim();
@@ -52,6 +77,24 @@ export async function PATCH(
           { error: 'Please provide your follow-up response for the moderator.' },
           { status: 400 },
         );
+      }
+
+      if (cloud) {
+        const auth = await verifyUserBearerToken(authHeader);
+        if (!auth.ok) {
+          return NextResponse.json({ error: auth.error, code: auth.code }, { status: auth.status });
+        }
+        const existing = await getCorrectionByIdWithCloud(id, auth.token);
+        if (!existing) {
+          return NextResponse.json({ error: 'Submission not found.' }, { status: 404 });
+        }
+        if (!auth.user.isAdmin && existing.submitterUid !== auth.user.uid) {
+          return NextResponse.json(
+            { error: 'Only the original contributor can respond to this submission.' },
+            { status: 403 },
+          );
+        }
+        idToken = auth.token;
       }
 
       const nextLyrics = Array.isArray(body.proposedLyrics)
@@ -78,9 +121,25 @@ export async function PATCH(
 
     if (body.action !== 'approve' && body.action !== 'request_info' && body.action !== 'reject') {
       return NextResponse.json(
-        { error: "Invalid action. Expected 'approve', 'request_info', 'reject', or 'submit_followup'." },
+        {
+          error:
+            "Invalid action. Expected 'approve', 'request_info', 'reject', or 'submit_followup'.",
+        },
         { status: 400 },
       );
+    }
+
+    let reviewerEmail = body.reviewerEmail;
+    if (cloud) {
+      const adminAuth = await verifyAdminBearerToken(authHeader);
+      if (!adminAuth.ok) {
+        return NextResponse.json(
+          { error: adminAuth.error, code: adminAuth.code },
+          { status: adminAuth.status },
+        );
+      }
+      idToken = adminAuth.token;
+      reviewerEmail = adminAuth.user.email || ADMIN_EMAIL;
     }
 
     if (body.action === 'request_info' && !(body.reviewNote || '').trim()) {
@@ -112,7 +171,7 @@ export async function PATCH(
       reviewNote: body.reviewNote,
       editedLyrics,
       editedMetadata: body.editedMetadata,
-      reviewerEmail: body.reviewerEmail,
+      reviewerEmail,
       idToken,
     });
 
@@ -122,6 +181,12 @@ export async function PATCH(
 
     return NextResponse.json({ correction: updated });
   } catch (err) {
+    logEvent('error', {
+      route: '/api/corrections/[id] PATCH',
+      errCode: 'correction_patch_failed',
+      httpStatus: 500,
+      message: err instanceof Error ? err.message : 'Unable to update correction',
+    });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Unable to update correction' },
       { status: 500 },

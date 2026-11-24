@@ -241,10 +241,12 @@ export function SuggestCorrectionDialog({
     setErrorMsg(null);
 
     try {
+      const idToken = await getCurrentFirebaseIdToken();
       const formData = new FormData();
       formData.append('file', file);
       const res = await fetch('/api/uploaded-audio', {
         method: 'POST',
+        headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
         body: formData,
       });
       const json = await res.json();

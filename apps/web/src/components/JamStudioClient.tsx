@@ -1,21 +1,37 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { onAuthStateChanged } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 import {
   transposePitch,
   type Bhajan,
-  type CatalogPayload,
+  type CatalogIndexPayload,
+  type CatalogStats,
   type LyricCorrection,
   type SubmissionType,
 } from '@bhajami/shared';
+import {
+  getCurrentFirebaseIdToken,
+  getFirebaseClientAuth,
+  getFirebaseClientFirestore,
+} from '@/lib/firebase-client';
+import {
+  getCachedBhajan,
+  getCachedCatalogIndex,
+  setCachedBhajan,
+  setCachedCatalogIndex,
+} from '@/lib/index-cache';
 import { ThemeToggle } from './ThemeToggle';
 import { AuthDialog, type SessionUser } from './AuthDialog';
 import { SuggestCorrectionDialog } from './SuggestCorrectionDialog';
 
 interface JamStudioClientProps {
-  initialCatalog: CatalogPayload;
+  initialIndex: CatalogIndexPayload;
+  initialBhajan: Bhajan | null;
   initialPendingCount: number;
+  cloudMode?: boolean;
 }
 
 const DEITY_FILTERS = [
@@ -34,18 +50,24 @@ const DEITY_FILTERS = [
 type StudioTabId = 'lyrics' | 'notation' | 'glossary' | 'meaning';
 
 export function JamStudioClient({
-  initialCatalog,
+  initialIndex,
+  initialBhajan,
   initialPendingCount,
+  cloudMode = false,
 }: JamStudioClientProps) {
-  const [catalog, setCatalog] = useState<CatalogPayload>(initialCatalog);
+  const [catalogIndex, setCatalogIndex] = useState<CatalogIndexPayload>(initialIndex);
+  const [bhajanCache, setBhajanCache] = useState<Record<string, Bhajan>>(() =>
+    initialBhajan ? { [initialBhajan.id]: initialBhajan } : {},
+  );
   const [pendingCount, setPendingCount] = useState(initialPendingCount);
   const [query, setQuery] = useState('');
   const [deityFilter, setDeityFilter] = useState<string>('All');
   const [onlyVerified, setOnlyVerified] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string>(
-    initialCatalog.bhajans[0]?.id || '',
+    initialBhajan?.id || initialIndex.entries[0]?.id || '',
   );
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [activeScriptIdx, setActiveScriptIdx] = useState(0);
   const [activeLineIdx, setActiveLineIdx] = useState(0);
   const [activeTab, setActiveTab] = useState<StudioTabId>('lyrics');
@@ -80,51 +102,148 @@ export function JamStudioClient({
   const [projectorOpen, setProjectorOpen] = useState(false);
   const [user, setUser] = useState<SessionUser | null>(null);
 
+  // Persist Firebase client authentication across reloads
+  useEffect(() => {
+    const fb = getFirebaseClientAuth();
+    if (!fb) return;
+    const unsub = onAuthStateChanged(fb.auth, (fbUser) => {
+      if (fbUser && !fbUser.isAnonymous) {
+        setUser({
+          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Sai Devotee',
+          email: fbUser.email || '',
+          uid: fbUser.uid,
+          provider: fbUser.providerData.some((p) => p.providerId === 'google.com')
+            ? 'google'
+            : 'email',
+        });
+      } else if (fbUser === null && cloudMode) {
+        setUser(null);
+      }
+    });
+    return () => unsub();
+  }, [cloudMode]);
+
+  // Open ?respondTo=<correctionId> flow with verified Bearer token
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const respondToId = params.get('respondTo')?.trim();
     if (!respondToId) return;
 
     let cancelled = false;
-    fetch(`/api/corrections/${encodeURIComponent(respondToId)}`, { cache: 'no-store' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
+    (async () => {
+      try {
+        const token = await getCurrentFirebaseIdToken();
+        const res = await fetch(`/api/corrections/${encodeURIComponent(respondToId)}`, {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (cancelled) return;
+        if (res.status === 401 && cloudMode && !token) {
+          setAuthOpen(true);
+          return;
+        }
+        if (!res.ok) return;
+        const data = (await res.json()) as { correction?: LyricCorrection };
         if (!cancelled && data?.correction) {
-          setRespondToCorrection(data.correction as LyricCorrection);
+          setRespondToCorrection(data.correction);
           setCorrectionOpen(true);
         }
-      })
-      .catch(() => {
+      } catch {
         // Ignore if submission cannot be loaded
-      });
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
+  }, [cloudMode, user?.uid]);
+
+  const fetchAndCacheBhajanDetail = useCallback(async (id: string, signal?: AbortSignal) => {
+    if (!id) return null;
+    try {
+      const res = await fetch(`/api/bhajans/${encodeURIComponent(id)}`, {
+        cache: 'no-store',
+        signal,
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as { bhajan?: Bhajan };
+      if (!json.bhajan) return null;
+      setBhajanCache((prev) => ({
+        ...prev,
+        [id]: json.bhajan!,
+        [json.bhajan!.id]: json.bhajan!,
+      }));
+      void setCachedBhajan(json.bhajan);
+      return json.bhajan;
+    } catch {
+      return null;
+    }
   }, []);
 
-  const refreshCatalog = async () => {
+  const refreshCatalog = useCallback(async () => {
     try {
       const res = await fetch('/api/bhajans', { cache: 'no-store' });
       if (!res.ok) return;
-      const data = (await res.json()) as CatalogPayload & {
+      const data = (await res.json()) as CatalogIndexPayload & {
         pendingCorrectionsCount?: number;
       };
-      setCatalog({
+      const nextPayload: CatalogIndexPayload = {
         generatedAt: data.generatedAt,
-        stats: data.stats,
-        bhajans: data.bhajans,
-      });
+        version: data.version,
+        stats: data.stats as CatalogStats,
+        entries: data.entries,
+      };
+      setCatalogIndex(nextPayload);
+      void setCachedCatalogIndex(nextPayload);
       if (typeof data.pendingCorrectionsCount === 'number') {
         setPendingCount(data.pendingCorrectionsCount);
+      }
+      if (selectedId) {
+        void fetchAndCacheBhajanDetail(selectedId);
       }
     } catch {
       // Keep current catalog snapshot on offline/network errors
     }
-  };
+  }, [fetchAndCacheBhajanDetail, selectedId]);
 
-  const filteredBhajans = useMemo(() => {
+  // Boot & check IndexedDB `bhajami_cache_v1` against Firestore `catalogMeta/latest`
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (initialBhajan) {
+        void setCachedBhajan(initialBhajan);
+      }
+      const cached = await getCachedCatalogIndex();
+      let currentVersion = initialIndex.version;
+      if (!cancelled && cached && cached.version > initialIndex.version) {
+        setCatalogIndex(cached);
+        currentVersion = cached.version;
+      } else {
+        void setCachedCatalogIndex(initialIndex);
+      }
+
+      const db = getFirebaseClientFirestore();
+      if (!db) return;
+      try {
+        const snap = await getDoc(doc(db, 'catalogMeta', 'latest'));
+        if (!cancelled && snap.exists()) {
+          const remoteVersion = Number(snap.data()?.version ?? 0);
+          if (remoteVersion > currentVersion) {
+            await refreshCatalog();
+          }
+        }
+      } catch {
+        // Offline or catalogMeta not yet seeded
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialBhajan, initialIndex, refreshCatalog]);
+
+  const filteredEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return catalog.bhajans.filter((b) => {
+    return catalogIndex.entries.filter((b) => {
       if (onlyVerified && b.metadataSource !== 'sairhythms_verified') return false;
       if (
         deityFilter !== 'All' &&
@@ -133,23 +252,50 @@ export function JamStudioClient({
         return false;
       }
       if (!q) return true;
-      const lyricsText = b.lyricsSets.flatMap((s) => s.lines).join(' ').toLowerCase();
       return (
         b.title.toLowerCase().includes(q) ||
-        (b.raga?.name || '').toLowerCase().includes(q) ||
+        (b.ragaName || '').toLowerCase().includes(q) ||
         (b.deity || '').toLowerCase().includes(q) ||
-        lyricsText.includes(q)
+        b.searchText.toLowerCase().includes(q)
       );
     });
-  }, [catalog.bhajans, deityFilter, onlyVerified, query]);
+  }, [catalogIndex.entries, deityFilter, onlyVerified, query]);
 
-  const activeBhajan: Bhajan | undefined = useMemo(() => {
-    return (
-      catalog.bhajans.find((b) => b.id === selectedId) ||
-      filteredBhajans[0] ||
-      catalog.bhajans[0]
-    );
-  }, [catalog.bhajans, filteredBhajans, selectedId]);
+  const activeEntry = useMemo(
+    () =>
+      catalogIndex.entries.find((b) => b.id === selectedId) ||
+      filteredEntries[0] ||
+      catalogIndex.entries[0],
+    [catalogIndex.entries, filteredEntries, selectedId],
+  );
+
+  const targetId = activeEntry?.id || '';
+  const activeBhajan: Bhajan | undefined = targetId ? bhajanCache[targetId] : undefined;
+
+  useEffect(() => {
+    if (!targetId || bhajanCache[targetId]) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoadingDetail(true);
+
+    (async () => {
+      const fromDb = await getCachedBhajan(targetId);
+      if (!cancelled && fromDb) {
+        setBhajanCache((prev) => ({ ...prev, [targetId]: fromDb }));
+        setLoadingDetail(false);
+        return;
+      }
+      await fetchAndCacheBhajanDetail(targetId, controller.signal);
+      if (!cancelled) {
+        setLoadingDetail(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [bhajanCache, fetchAndCacheBhajanDetail, targetId]);
 
   useEffect(() => {
     setActiveScriptIdx(0);
@@ -259,7 +405,7 @@ export function JamStudioClient({
 
   const activeAudioUrl = activeRecording
     ? activeRecording.localPath
-      ? `/api/local-audio?id=${encodeURIComponent(activeRecording.id)}`
+      ? `/api/local-audio?id=${encodeURIComponent(activeRecording.id)}&bhajanId=${encodeURIComponent(activeBhajan?.id || '')}`
       : activeRecording.externalUrl || ''
     : '';
 
@@ -287,6 +433,16 @@ export function JamStudioClient({
       setActiveTab(prev);
       document.getElementById(`studio-tab-${prev}`)?.focus();
     }
+  };
+
+  const openContributionModal = (nextMode: SubmissionType) => {
+    if (cloudMode && (!user || user.provider === 'guest')) {
+      setAuthOpen(true);
+      return;
+    }
+    setRespondToCorrection(null);
+    setCorrectionMode(nextMode);
+    setCorrectionOpen(true);
   };
 
   return (
@@ -324,14 +480,14 @@ export function JamStudioClient({
 
       <main className="portal-shell">
         <div className="stats-strip">
-          <span className="badge">Total Bhajans: {catalog.stats.totalBhajans}</span>
+          <span className="badge">Total Bhajans: {catalogIndex.stats.totalBhajans}</span>
           <span className="badge badge-verified">
-            Sai Rhythms Enriched: {catalog.stats.verifiedSaiRhythmsCount}
+            Sai Rhythms Enriched: {catalogIndex.stats.verifiedSaiRhythmsCount}
           </span>
           <span className="badge">
-            BhajanDownloader (SSS Media): {catalog.stats.bhajanDownloaderCount} MP3s
+            BhajanDownloader (SSS Media): {catalogIndex.stats.bhajanDownloaderCount} MP3s
           </span>
-          <span className="badge">RaviMp3 Archive: {catalog.stats.raviMp3Count} MP3s</span>
+          <span className="badge">RaviMp3 Archive: {catalogIndex.stats.raviMp3Count} MP3s</span>
         </div>
 
         <div className="portal-grid">
@@ -381,33 +537,33 @@ export function JamStudioClient({
             </label>
 
             <div className="song-list" role="list" aria-label="Filtered Bhajans">
-              {filteredBhajans.slice(0, 120).map((b) => (
+              {filteredEntries.slice(0, 120).map((b) => (
                 <button
                   key={b.id}
                   type="button"
                   className="song-item"
-                  aria-current={b.id === activeBhajan?.id ? 'true' : undefined}
+                  aria-current={b.id === activeEntry?.id ? 'true' : undefined}
                   onClick={() => setSelectedId(b.id)}
                 >
                   <span className="song-item-title">{b.title}</span>
                   <span className="song-item-meta">
                     {b.deity ? <span>{b.deity}</span> : null}
-                    {b.raga?.name ? <span>· {b.raga.name}</span> : null}
-                    <span>· {b.recordings.length} audio</span>
+                    {b.ragaName ? <span>· {b.ragaName}</span> : null}
+                    <span>· {b.recordingCount} audio</span>
                     {b.metadataSource === 'sairhythms_verified' ? (
                       <span style={{ color: 'var(--success)', fontWeight: 700 }}>· Verified</span>
                     ) : null}
                   </span>
                 </button>
               ))}
-              {filteredBhajans.length > 120 && (
+              {filteredEntries.length > 120 && (
                 <p style={{ fontSize: '0.8rem', color: 'var(--muted)', textAlign: 'center' }}>
-                  Showing top 120 of {filteredBhajans.length} matches — narrow search above.
+                  Showing top 120 of {filteredEntries.length} matches — narrow search above.
                 </p>
               )}
-              {filteredBhajans.length === 0 && (
+              {filteredEntries.length === 0 && (
                 <p style={{ fontSize: '0.88rem', color: 'var(--muted)' }}>
-                  No bhajans match "{query}". Clear filters to see all {catalog.stats.totalBhajans}.
+                  No bhajans match "{query}". Clear filters to see all {catalogIndex.stats.totalBhajans}.
                 </p>
               )}
             </div>
@@ -477,22 +633,14 @@ export function JamStudioClient({
                     <button
                       type="button"
                       className="btn btn-primary"
-                      onClick={() => {
-                        setRespondToCorrection(null);
-                        setCorrectionMode('lyric_correction');
-                        setCorrectionOpen(true);
-                      }}
+                      onClick={() => openContributionModal('lyric_correction')}
                     >
                       Contribute / Suggest
                     </button>
                     <button
                       type="button"
                       className="btn"
-                      onClick={() => {
-                        setRespondToCorrection(null);
-                        setCorrectionMode('new_bhajan');
-                        setCorrectionOpen(true);
-                      }}
+                      onClick={() => openContributionModal('new_bhajan')}
                     >
                       + New Bhajan
                     </button>
@@ -879,6 +1027,12 @@ export function JamStudioClient({
                 </div>
               </div>
             </section>
+          ) : loadingDetail ? (
+            <section className="card" aria-live="polite" aria-label="Loading Bhajan">
+              <p style={{ color: 'var(--muted)', margin: 0 }}>
+                Loading bhajan lyrics, notation, and recordings…
+              </p>
+            </section>
           ) : null}
         </div>
       </main>
@@ -928,6 +1082,7 @@ export function JamStudioClient({
         open={authOpen}
         onClose={() => setAuthOpen(false)}
         user={user}
+        cloudMode={cloudMode}
         onSignedIn={(signedUser) => setUser(signedUser)}
         onSignOut={() => setUser(null)}
       />

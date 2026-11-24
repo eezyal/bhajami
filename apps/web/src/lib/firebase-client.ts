@@ -2,6 +2,7 @@
 
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
+import { getFirestore, type Firestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -17,15 +18,31 @@ export function isFirebaseClientConfigured(): boolean {
 }
 
 let cachedApp: FirebaseApp | null = null;
+let cachedDb: Firestore | null = null;
 
-export function getFirebaseClientAuth(): { auth: Auth; googleProvider: GoogleAuthProvider } | null {
+function getClientApp(): FirebaseApp | null {
   if (!isFirebaseClientConfigured()) return null;
   if (!cachedApp) {
     cachedApp = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
   }
-  const auth = getAuth(cachedApp);
+  return cachedApp;
+}
+
+export function getFirebaseClientAuth(): { auth: Auth; googleProvider: GoogleAuthProvider } | null {
+  const app = getClientApp();
+  if (!app) return null;
+  const auth = getAuth(app);
   const googleProvider = new GoogleAuthProvider();
   return { auth, googleProvider };
+}
+
+export function getFirebaseClientFirestore(): Firestore | null {
+  const app = getClientApp();
+  if (!app) return null;
+  if (!cachedDb) {
+    cachedDb = getFirestore(app);
+  }
+  return cachedDb;
 }
 
 export async function getCurrentFirebaseIdToken(): Promise<string | null> {

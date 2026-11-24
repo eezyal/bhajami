@@ -7,13 +7,18 @@ import {
   type SubmissionType,
 } from '@bhajami/shared';
 import {
-  getMergedCatalogWithCloud,
+  getBhajanDetail,
   listCorrectionsWithCloud,
   listOutboxEmails,
+  listOutboxEmailsWithCloud,
   listRevisions,
+  listRevisionsWithCloud,
   saveNewCorrection,
 } from '@/lib/catalog-store';
 import { dispatchAdminCorrectionEmail } from '@/lib/email';
+import { extractBearerToken, verifyUserBearerToken } from '@/lib/firebase-admin';
+import { hasCloudConfig } from '@/lib/firestore-rest';
+import { logEvent } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,13 +30,6 @@ const VALID_SUBMISSION_TYPES = new Set<SubmissionType>([
   'metadata_addition',
 ]);
 
-function extractBearerToken(request: NextRequest): string | null {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const token = authHeader.slice(7).trim();
-  return token || null;
-}
-
 function slugifyTitle(title: string): string {
   const base = title
     .toLowerCase()
@@ -41,7 +39,9 @@ function slugifyTitle(title: string): string {
   return base || 'community-bhajan';
 }
 
-function sanitizeAudioSubmission(raw: AudioSubmissionInfo | null | undefined): AudioSubmissionInfo | null {
+function sanitizeAudioSubmission(
+  raw: AudioSubmissionInfo | null | undefined,
+): AudioSubmissionInfo | null {
   if (!raw || typeof raw.url !== 'string' || !raw.url.trim()) return null;
   const info: AudioSubmissionInfo = {
     url: raw.url.trim(),
@@ -51,14 +51,41 @@ function sanitizeAudioSubmission(raw: AudioSubmissionInfo | null | undefined): A
   if (typeof raw.mimeType === 'string' && raw.mimeType.trim()) {
     info.mimeType = raw.mimeType.trim();
   }
-  if (typeof raw.durationSec === 'number' && Number.isFinite(raw.durationSec) && raw.durationSec >= 0) {
+  if (
+    typeof raw.durationSec === 'number' &&
+    Number.isFinite(raw.durationSec) &&
+    raw.durationSec >= 0
+  ) {
     info.durationSec = raw.durationSec;
   }
   return info;
 }
 
 export async function GET(request: NextRequest) {
-  const idToken = extractBearerToken(request);
+  const authHeader = request.headers.get('authorization');
+
+  if (hasCloudConfig()) {
+    const auth = await verifyUserBearerToken(authHeader);
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.error, code: auth.code }, { status: auth.status });
+    }
+
+    if (auth.user.isAdmin) {
+      const [corrections, outbox, revisions] = await Promise.all([
+        listCorrectionsWithCloud(auth.token),
+        listOutboxEmailsWithCloud(),
+        listRevisionsWithCloud(),
+      ]);
+      return NextResponse.json({ corrections, outbox, revisions });
+    }
+
+    const corrections = await listCorrectionsWithCloud(auth.token, {
+      submitterUid: auth.user.uid,
+    });
+    return NextResponse.json({ corrections, outbox: [], revisions: [] });
+  }
+
+  const idToken = extractBearerToken(authHeader);
   return NextResponse.json({
     corrections: await listCorrectionsWithCloud(idToken),
     outbox: listOutboxEmails(),
@@ -68,6 +95,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const authHeader = request.headers.get('authorization');
+    let idToken: string | null = extractBearerToken(authHeader);
+    let verifiedUid: string | null = null;
+
+    if (hasCloudConfig()) {
+      const auth = await verifyUserBearerToken(authHeader);
+      if (!auth.ok) {
+        return NextResponse.json({ error: auth.error, code: auth.code }, { status: auth.status });
+      }
+      verifiedUid = auth.user.uid;
+      idToken = auth.token;
+    }
+
     const body = (await request.json()) as {
       bhajanId?: string;
       bhajanTitle?: string;
@@ -111,10 +151,12 @@ export async function POST(request: NextRequest) {
 
     const hasMetaChanges = Boolean(
       body.proposedMetadata &&
-        Object.values(body.proposedMetadata).some((v) => typeof v === 'string' && v.trim() !== ''),
+        Object.values(body.proposedMetadata).some(
+          (v) =>
+            (typeof v === 'string' && v.trim() !== '') ||
+            (typeof v === 'number' && Number.isFinite(v)),
+        ),
     );
-
-    const { catalog } = await getMergedCatalogWithCloud();
 
     let resolvedBhajanId = (body.bhajanId || '').trim();
     let resolvedTitle = (body.bhajanTitle || body.proposedMetadata?.title || '').trim();
@@ -134,27 +176,28 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
-      const existingIds = new Set(catalog.bhajans.map((b) => b.id));
-      const baseSlug = resolvedBhajanId ? slugifyTitle(resolvedBhajanId) : slugifyTitle(resolvedTitle);
-      resolvedBhajanId = existingIds.has(baseSlug)
-        ? `${baseSlug}-${Date.now().toString(36)}`
-        : baseSlug;
+      const baseSlug = resolvedBhajanId
+        ? slugifyTitle(resolvedBhajanId)
+        : slugifyTitle(resolvedTitle);
+      const collision = await getBhajanDetail(baseSlug);
+      resolvedBhajanId = collision ? `${baseSlug}-${Date.now().toString(36)}` : baseSlug;
       scriptLabel = scriptLabel || body.proposedMetadata?.language?.trim() || 'Sanskrit / Hindi';
       originalLines = [];
     } else {
       if (!resolvedBhajanId) {
         return NextResponse.json({ error: 'Please provide bhajanId.' }, { status: 400 });
       }
-      const bhajan = catalog.bhajans.find((b) => b.id === resolvedBhajanId);
+      const bhajan = await getBhajanDetail(resolvedBhajanId);
       if (!bhajan) {
         return NextResponse.json({ error: 'Bhajan not found.' }, { status: 404 });
       }
+      resolvedBhajanId = bhajan.id;
       resolvedTitle = bhajan.title;
       scriptLabel = scriptLabel || bhajan.lyricsSets[0]?.language || 'Roman';
       const matchingSet =
         bhajan.lyricsSets.find((ls) => ls.language.toLowerCase() === scriptLabel.toLowerCase()) ||
         bhajan.lyricsSets[0];
-      originalLines = matchingSet?.lines ?? [bhajan.title];
+      originalLines = matchingSet?.lines ?? (bhajan.lyricsMissing ? [] : [bhajan.title]);
 
       const diff = computeLyricsDiff(originalLines, lines);
       if (submissionType === 'lyric_correction') {
@@ -206,7 +249,7 @@ export async function POST(request: NextRequest) {
       reasonOrSource,
       submitterName,
       submitterEmail,
-      submitterUid: body.submitterUid ?? null,
+      submitterUid: hasCloudConfig() ? verifiedUid : body.submitterUid ?? null,
       status: 'pending',
       createdAt: new Date().toISOString(),
       reviewedAt: null,
@@ -218,7 +261,6 @@ export async function POST(request: NextRequest) {
       contributorRepliedAt: null,
     };
 
-    const idToken = extractBearerToken(request);
     const outboxEmail = await dispatchAdminCorrectionEmail(correction);
     await saveNewCorrection(correction, outboxEmail, idToken);
 
@@ -230,6 +272,12 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (err) {
+    logEvent('error', {
+      route: '/api/corrections POST',
+      errCode: 'correction_submit_failed',
+      httpStatus: 500,
+      message: err instanceof Error ? err.message : 'Unable to submit correction',
+    });
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Unable to submit correction' },
       { status: 500 },

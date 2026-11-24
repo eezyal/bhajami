@@ -15,3 +15,4 @@ tools/catalog-pipeline/*.sqlite*
 tools/catalog-pipeline/*.jsonl
 .DS_Store
 **/.DS_Store
+*.tsbuildinfo

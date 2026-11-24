@@ -23,6 +23,10 @@ export const CHROMATIC_PITCHES: readonly ChromaticPitchStep[] = [
   { semitoneFromC: 11, pancham: '7 Pancham', western: 'B', freqHz: 246.94 },
 ] as const;
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function parsePitchString(
   raw: string | null | undefined,
   fallbackSemitone = 2,
@@ -32,8 +36,9 @@ export function parsePitchString(
 
   for (const step of CHROMATIC_PITCHES) {
     const panchamLower = step.pancham.toLowerCase();
+    const panchamPattern = new RegExp(`(^|[^0-9.])${escapeRegex(panchamLower)}($|[^a-z0-9])`);
     const westernTokens = step.western.toLowerCase().split('/').map((s) => s.trim());
-    if (normalized && normalized.includes(panchamLower)) {
+    if (normalized && panchamPattern.test(normalized)) {
       return {
         raw: cleaned || `${step.pancham} / ${step.western}`,
         pancham: step.pancham,
@@ -44,7 +49,7 @@ export function parsePitchString(
     if (
       normalized &&
       westernTokens.some((tok) =>
-        new RegExp(`(^|[^a-z#])${tok.replace('#', '\\#')}([^a-z#]|$)`).test(normalized),
+        new RegExp(`(^|[^a-z#])${escapeRegex(tok)}([^a-z#]|$)`).test(normalized),
       )
     ) {
       return {

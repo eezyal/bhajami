@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { NextRequest, NextResponse } from 'next/server';
-import { getRecordingById } from '@/lib/catalog-store';
+import { getBhajanDetail, getRecordingById } from '@/lib/catalog-store';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const ALLOWED_ROOTS = [
   '/Users/chax/Downloads/BhajanDownloader',
@@ -19,12 +20,28 @@ function isUnderAllowedRoot(targetPath: string): boolean {
 }
 
 export async function GET(request: NextRequest) {
+  if (process.env.LOCAL_ARCHIVE_ENABLED !== 'true') {
+    return NextResponse.json(
+      { error: 'Local archive audio is disabled in cloud mode.' },
+      { status: 404 },
+    );
+  }
+
   const id = request.nextUrl.searchParams.get('id');
   if (!id) {
     return NextResponse.json({ error: 'Missing recording id' }, { status: 400 });
   }
 
-  const recording = getRecordingById(id);
+  const bhajanId = request.nextUrl.searchParams.get('bhajanId');
+  let recording = null;
+  if (bhajanId) {
+    const bhajan = await getBhajanDetail(bhajanId);
+    recording = bhajan?.recordings.find((r) => r.id === id) ?? null;
+  }
+  if (!recording) {
+    recording = getRecordingById(id);
+  }
+
   if (!recording?.localPath) {
     return NextResponse.json({ error: 'Local recording not found' }, { status: 404 });
   }

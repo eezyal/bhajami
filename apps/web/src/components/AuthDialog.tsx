@@ -5,6 +5,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signOut,
 } from 'firebase/auth';
 import { getFirebaseClientAuth, isFirebaseClientConfigured } from '@/lib/firebase-client';
 
@@ -19,17 +20,20 @@ interface AuthDialogProps {
   open: boolean;
   onClose: () => void;
   user: SessionUser | null;
+  cloudMode?: boolean;
   onSignedIn: (user: SessionUser) => void;
   onSignOut: () => void;
 }
 
-function formatAuthError(err: unknown, fallback: string): string {
+function formatAuthError(err: unknown, fallback: string, isCloud: boolean): string {
   const msg = err instanceof Error ? err.message : fallback;
   if (
     msg.includes('auth/configuration-not-found') ||
     msg.includes('auth/operation-not-allowed')
   ) {
-    return 'Enable this Sign-In provider in Firebase Console → Authentication → Sign-in method (saibhajanverse), or use Continue in Guest Jam Mode below.';
+    return isCloud
+      ? 'Enable this Sign-In provider in Firebase Console → Authentication → Sign-in method (saibhajanverse).'
+      : 'Enable this Sign-In provider in Firebase Console → Authentication → Sign-in method (saibhajanverse), or use Continue as Guest below.';
   }
   return msg;
 }
@@ -38,9 +42,11 @@ export function AuthDialog({
   open,
   onClose,
   user,
+  cloudMode,
   onSignedIn,
   onSignOut,
 }: AuthDialogProps) {
+  const isCloud = cloudMode ?? isFirebaseClientConfigured();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [mode, setMode] = useState<'signin' | 'register'>('signin');
   const [email, setEmail] = useState('');
@@ -114,13 +120,22 @@ export function AuthDialog({
           uid: result.user.uid,
           provider: 'google',
         });
+        setBusy(false);
         dialogRef.current?.close();
         return;
       } catch (err) {
-        setStatusMessage(formatAuthError(err, 'Google Sign-In failed'));
+        setStatusMessage(formatAuthError(err, 'Google Sign-In failed', isCloud));
         setBusy(false);
         return;
       }
+    }
+
+    if (isCloud) {
+      setStatusMessage(
+        'Firebase Web configuration is missing. Set NEXT_PUBLIC_FIREBASE_* keys before signing in.',
+      );
+      setBusy(false);
+      return;
     }
 
     onSignedIn({
@@ -158,13 +173,21 @@ export function AuthDialog({
         dialogRef.current?.close();
         return;
       } catch (err) {
-        setStatusMessage(formatAuthError(err, 'Authentication failed'));
+        setStatusMessage(formatAuthError(err, 'Authentication failed', isCloud));
         setBusy(false);
         return;
       }
     }
 
-    // Local preview mode before saibhajanverse Web API keys are populated in .env.local
+    if (isCloud) {
+      setStatusMessage(
+        'Firebase Web configuration is missing. Set NEXT_PUBLIC_FIREBASE_* keys before signing in.',
+      );
+      setBusy(false);
+      return;
+    }
+
+    // Local preview mode when cloud config is disabled
     onSignedIn({
       name: displayName.trim() || email.split('@')[0],
       email: email.trim(),
@@ -172,6 +195,19 @@ export function AuthDialog({
       provider: 'email',
     });
     setBusy(false);
+    dialogRef.current?.close();
+  };
+
+  const handleSignOut = async () => {
+    const fb = getFirebaseClientAuth();
+    if (fb) {
+      try {
+        await signOut(fb.auth);
+      } catch {
+        // Still clear client session state
+      }
+    }
+    onSignOut();
     dialogRef.current?.close();
   };
 
@@ -187,8 +223,8 @@ export function AuthDialog({
           <div>
             <h2 id="auth-dialog-title">Sign in to bhaJami (saibhajanverse)</h2>
             <span className="field-hint">
-              {isFirebaseClientConfigured()
-                ? 'Connected to live Firebase Auth (saibhajanverse)'
+              {isCloud
+                ? 'Connected to live Firebase Auth (saibhajanverse) — non-anonymous account required for contributions'
                 : 'Local Dev Auth Preview — add Firebase Web keys in .env.local for live OAuth'}
             </span>
           </div>
@@ -208,14 +244,7 @@ export function AuthDialog({
             <p style={{ margin: '0 0 0.75rem 0' }}>
               <strong>{user.name}</strong> ({user.email}) · via {user.provider}
             </p>
-            <button
-              type="button"
-              className="btn btn-danger btn-sm"
-              onClick={() => {
-                onSignOut();
-                dialogRef.current?.close();
-              }}
-            >
+            <button type="button" className="btn btn-danger btn-sm" onClick={handleSignOut}>
               Sign Out
             </button>
           </div>
@@ -242,16 +271,18 @@ export function AuthDialog({
           >
             Facebook / Instagram (Meta OIDC)
           </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              onSignedIn({ name: 'Guest Bhajan Singer', email: 'guest@local', provider: 'guest' });
-              dialogRef.current?.close();
-            }}
-          >
-            Continue as Guest
-          </button>
+          {!isCloud && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                onSignedIn({ name: 'Guest Bhajan Singer', email: 'guest@local', provider: 'guest' });
+                dialogRef.current?.close();
+              }}
+            >
+              Continue as Guest
+            </button>
+          )}
         </div>
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '1rem 0' }} />

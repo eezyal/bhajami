@@ -10,9 +10,13 @@
     "catalog:build": "python3 tools/catalog-pipeline/build_catalog.py",
     "dev": "npm run dev --workspace=apps/web",
     "build": "npm run build --workspace=apps/web",
-    "start": "npm run start --workspace=apps/web"
+    "start": "npm run start --workspace=apps/web",
+    "test:phase1": "tsx --tsconfig apps/web/tsconfig.json --test packages/shared/tests/missing-fields.test.ts apps/web/tests/api-auth-contracts.test.ts"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }

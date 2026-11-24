@@ -46,13 +46,34 @@ import {
 } from './email';
 import { logEvent } from './logger';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const CATALOG_PATH = path.resolve(process.cwd(), '../../packages/shared/data/catalog.json');
-const CORRECTIONS_PATH = path.join(DATA_DIR, 'corrections-store.json');
-const OVERRIDES_PATH = path.join(DATA_DIR, 'approved-overrides.json');
-const NEW_BHAJANS_PATH = path.join(DATA_DIR, 'approved-new-bhajans.json');
-const REVISIONS_PATH = path.join(DATA_DIR, 'revisions-store.json');
-const OUTBOX_PATH = path.join(DATA_DIR, 'email-outbox.json');
+function resolveDataDir(): string {
+  if (process.env.BHAJAMI_DATA_DIR) {
+    return path.resolve(process.env.BHAJAMI_DATA_DIR);
+  }
+  const repoRootWeb = path.resolve(process.cwd(), 'apps/web');
+  return fs.existsSync(repoRootWeb)
+    ? path.join(repoRootWeb, 'data')
+    : path.resolve(process.cwd(), 'data');
+}
+
+function resolveCatalogPath(): string {
+  const candidates = [
+    path.resolve(process.cwd(), '../../packages/shared/data/catalog.json'),
+    path.resolve(process.cwd(), 'packages/shared/data/catalog.json'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
+const CATALOG_PATH = resolveCatalogPath();
+
+function getStorePath(filename: string): string {
+  return path.join(resolveDataDir(), filename);
+}
 
 type ApprovedOverride = CloudApprovedOverride;
 
@@ -89,8 +110,9 @@ function randomSuffix(length = 4): string {
 
 function ensureDataDir(): void {
   if (hasCloudConfig()) return;
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  const dataDir = resolveDataDir();
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
   }
 }
 
@@ -141,7 +163,7 @@ export function getRecordingById(recordingId: string): RecordingSource | null {
 
 function ensureInitialPendingSample(): void {
   if (hasCloudConfig()) return;
-  if (fs.existsSync(CORRECTIONS_PATH)) return;
+  if (fs.existsSync(getStorePath('corrections-store.json'))) return;
   const catalog = getRawCatalog();
   const target =
     catalog.bhajans.find((b) => b.id === 'aao-aao-nandalala') || catalog.bhajans[0];
@@ -184,8 +206,8 @@ function ensureInitialPendingSample(): void {
     subject: rendered.subject,
   };
 
-  writeJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, [sample]);
-  writeJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, [
+  writeJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), [sample]);
+  writeJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), [
     {
       id: 'mail_sample_001',
       correctionId: sample.id,
@@ -438,9 +460,9 @@ export function getMergedCatalog(): {
 } {
   ensureInitialPendingSample();
   const raw = getRawCatalog();
-  const overrides = readJsonFile<Record<string, ApprovedOverride>>(OVERRIDES_PATH, {});
-  const newBhajans = readJsonFile<Bhajan[]>(NEW_BHAJANS_PATH, []);
-  const corrections = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+  const overrides = readJsonFile<Record<string, ApprovedOverride>>(getStorePath('approved-overrides.json'), {});
+  const newBhajans = readJsonFile<Bhajan[]>(getStorePath('approved-new-bhajans.json'), []);
+  const corrections = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
 
   const mergedBhajans = applyOverridesToBhajans(raw.bhajans, overrides, newBhajans);
   const pendingCount = corrections.filter(
@@ -586,14 +608,14 @@ export async function getMergedCatalogWithCloud(): Promise<{
   }
 
   ensureInitialPendingSample();
-  const localOverrides = readJsonFile<Record<string, ApprovedOverride>>(OVERRIDES_PATH, {});
-  const newBhajans = readJsonFile<Bhajan[]>(NEW_BHAJANS_PATH, []);
+  const localOverrides = readJsonFile<Record<string, ApprovedOverride>>(getStorePath('approved-overrides.json'), {});
+  const newBhajans = readJsonFile<Bhajan[]>(getStorePath('approved-new-bhajans.json'), []);
   const cloudOverrides = await fetchCloudApprovedOverrides();
   const mergedOverrides: Record<string, ApprovedOverride> = {
     ...localOverrides,
     ...cloudOverrides,
   };
-  const corrections = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+  const corrections = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
 
   const mergedBhajans = applyOverridesToBhajans(raw.bhajans, mergedOverrides, newBhajans);
   const pendingCount = corrections.filter(
@@ -803,7 +825,7 @@ export async function getBhajanDetail(id: string): Promise<Bhajan | null> {
 export function listCorrections(): LyricCorrection[] {
   if (hasCloudConfig()) return [];
   ensureInitialPendingSample();
-  const items = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+  const items = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
   return items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
@@ -865,7 +887,7 @@ export async function listCorrectionsWithCloud(
 export function listOutboxEmails(): OutboxEmailRecord[] {
   if (hasCloudConfig()) return [];
   ensureInitialPendingSample();
-  const items = readJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, []);
+  const items = readJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), []);
   return items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
@@ -904,7 +926,7 @@ export async function listOutboxEmailsWithCloud(): Promise<OutboxEmailRecord[]> 
 
 export function listRevisions(): BhajanRevision[] {
   if (hasCloudConfig()) return [];
-  const items = readJsonFile<BhajanRevision[]>(REVISIONS_PATH, []);
+  const items = readJsonFile<BhajanRevision[]>(getStorePath('revisions-store.json'), []);
   return items.sort((a, b) => (a.approvedAt < b.approvedAt ? 1 : -1));
 }
 
@@ -985,20 +1007,20 @@ export async function saveNewCorrection(
 
   if (!hasCloudConfig()) {
     ensureInitialPendingSample();
-    const corrections = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+    const corrections = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
     corrections.unshift(correction);
-    writeJsonFile(CORRECTIONS_PATH, corrections);
+    writeJsonFile(getStorePath('corrections-store.json'), corrections);
 
-    const outbox = readJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, []);
+    const outbox = readJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), []);
     outbox.unshift(outboxEmail);
-    writeJsonFile(OUTBOX_PATH, outbox);
+    writeJsonFile(getStorePath('email-outbox.json'), outbox);
   }
 }
 
 export function getCorrectionById(id: string): LyricCorrection | null {
   if (hasCloudConfig()) return null;
   ensureInitialPendingSample();
-  const items = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+  const items = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
   return items.find((c) => c.id === id) ?? null;
 }
 
@@ -1176,7 +1198,7 @@ export async function reviewCorrection(params: {
     if (!current) return null;
   } else {
     ensureInitialPendingSample();
-    corrections = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+    corrections = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
     idx = corrections.findIndex((c) => c.id === params.id);
     if (idx === -1 && params.idToken) {
       const cloudMatch = await fetchCloudCorrectionById(params.id, params.idToken);
@@ -1208,7 +1230,7 @@ export async function reviewCorrection(params: {
 
     if (!cloudMode) {
       corrections[idx] = updated;
-      writeJsonFile(CORRECTIONS_PATH, corrections);
+      writeJsonFile(getStorePath('corrections-store.json'), corrections);
     }
 
     const synced = await syncCorrectionDecisionToCloud({
@@ -1225,9 +1247,9 @@ export async function reviewCorrection(params: {
       reviewerEmail: reviewer,
     });
     if (!cloudMode) {
-      const outbox = readJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, []);
+      const outbox = readJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), []);
       outbox.unshift(followupMail);
-      writeJsonFile(OUTBOX_PATH, outbox);
+      writeJsonFile(getStorePath('email-outbox.json'), outbox);
     }
 
     return updated;
@@ -1247,7 +1269,7 @@ export async function reviewCorrection(params: {
 
     if (!cloudMode) {
       corrections[idx] = updated;
-      writeJsonFile(CORRECTIONS_PATH, corrections);
+      writeJsonFile(getStorePath('corrections-store.json'), corrections);
     }
 
     const synced = await syncCorrectionDecisionToCloud({
@@ -1264,9 +1286,9 @@ export async function reviewCorrection(params: {
       reviewerEmail: reviewer,
     });
     if (!cloudMode) {
-      const outbox = readJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, []);
+      const outbox = readJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), []);
       outbox.unshift(rejectionMail);
-      writeJsonFile(OUTBOX_PATH, outbox);
+      writeJsonFile(getStorePath('email-outbox.json'), outbox);
     }
 
     return updated;
@@ -1292,7 +1314,7 @@ export async function reviewCorrection(params: {
   const existingBhajan = await getBhajanDetail(current.bhajanId);
   const localOverrides = cloudMode
     ? {}
-    : readJsonFile<Record<string, ApprovedOverride>>(OVERRIDES_PATH, {});
+    : readJsonFile<Record<string, ApprovedOverride>>(getStorePath('approved-overrides.json'), {});
   const existingOv = localOverrides[current.bhajanId];
 
   const submittedRecording: RecordingSource[] = current.audioSubmission?.url
@@ -1376,9 +1398,9 @@ export async function reviewCorrection(params: {
 
     if (!cloudMode) {
       localOverrides[current.bhajanId] = nextOverride;
-      writeJsonFile(OVERRIDES_PATH, localOverrides);
+      writeJsonFile(getStorePath('approved-overrides.json'), localOverrides);
 
-      const newBhajans = readJsonFile<Bhajan[]>(NEW_BHAJANS_PATH, []);
+      const newBhajans = readJsonFile<Bhajan[]>(getStorePath('approved-new-bhajans.json'), []);
       const constructed = buildBhajanFromOverride(nextOverride);
       const existingNewIdx = newBhajans.findIndex((b) => b.id === constructed.id);
       if (existingNewIdx >= 0) {
@@ -1386,7 +1408,7 @@ export async function reviewCorrection(params: {
       } else {
         newBhajans.unshift(constructed);
       }
-      writeJsonFile(NEW_BHAJANS_PATH, newBhajans);
+      writeJsonFile(getStorePath('approved-new-bhajans.json'), newBhajans);
     }
   } else {
     const baseLyricsSets = existingOv?.lyricsSets ?? existingBhajan?.lyricsSets ?? [];
@@ -1435,7 +1457,7 @@ export async function reviewCorrection(params: {
 
     if (!cloudMode) {
       localOverrides[current.bhajanId] = nextOverride;
-      writeJsonFile(OVERRIDES_PATH, localOverrides);
+      writeJsonFile(getStorePath('approved-overrides.json'), localOverrides);
     }
   }
 
@@ -1453,11 +1475,11 @@ export async function reviewCorrection(params: {
 
   if (!cloudMode) {
     corrections[idx] = updated;
-    writeJsonFile(CORRECTIONS_PATH, corrections);
+    writeJsonFile(getStorePath('corrections-store.json'), corrections);
 
-    const revisions = readJsonFile<BhajanRevision[]>(REVISIONS_PATH, []);
+    const revisions = readJsonFile<BhajanRevision[]>(getStorePath('revisions-store.json'), []);
     revisions.unshift(revision);
-    writeJsonFile(REVISIONS_PATH, revisions);
+    writeJsonFile(getStorePath('revisions-store.json'), revisions);
   }
 
   const synced = await syncCorrectionDecisionToCloud({
@@ -1476,12 +1498,12 @@ export async function reviewCorrection(params: {
     reviewerEmail: reviewer,
   });
   if (!cloudMode) {
-    const outbox = readJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, []);
+    const outbox = readJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), []);
     outbox.unshift({
       ...approvalMail,
       id: `mail_${Date.now()}_${randomSuffix(4)}`,
     });
-    writeJsonFile(OUTBOX_PATH, outbox);
+    writeJsonFile(getStorePath('email-outbox.json'), outbox);
   }
 
   return updated;
@@ -1504,7 +1526,7 @@ export async function submitContributorFollowup(params: {
     if (!current) return null;
   } else {
     ensureInitialPendingSample();
-    corrections = readJsonFile<LyricCorrection[]>(CORRECTIONS_PATH, []);
+    corrections = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
     idx = corrections.findIndex((c) => c.id === params.id);
     if (idx === -1 && params.idToken) {
       const cloudMatch = await fetchCloudCorrectionById(params.id, params.idToken);
@@ -1538,7 +1560,7 @@ export async function submitContributorFollowup(params: {
 
   if (!cloudMode) {
     corrections[idx] = updated;
-    writeJsonFile(CORRECTIONS_PATH, corrections);
+    writeJsonFile(getStorePath('corrections-store.json'), corrections);
   }
 
   const synced = await syncCorrectionDecisionToCloud({
@@ -1551,9 +1573,9 @@ export async function submitContributorFollowup(params: {
 
   const adminMail = await dispatchAdminCorrectionEmail(updated);
   if (!cloudMode) {
-    const outbox = readJsonFile<OutboxEmailRecord[]>(OUTBOX_PATH, []);
+    const outbox = readJsonFile<OutboxEmailRecord[]>(getStorePath('email-outbox.json'), []);
     outbox.unshift(adminMail);
-    writeJsonFile(OUTBOX_PATH, outbox);
+    writeJsonFile(getStorePath('email-outbox.json'), outbox);
   }
 
   return updated;

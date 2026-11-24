@@ -4,6 +4,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { NextResponse } from 'next/server';
+import { verifyUserBearerToken } from '@/lib/firebase-admin';
+import { hasCloudConfig } from '@/lib/firestore-rest';
+import { logEvent } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -84,6 +87,22 @@ function resolveExtension(fileName: string, mimeType: string): string | null {
 
 export async function POST(request: Request) {
   try {
+    if (hasCloudConfig()) {
+      const auth = await verifyUserBearerToken(request.headers.get('authorization'));
+      if (!auth.ok) {
+        return NextResponse.json({ error: auth.error, code: auth.code }, { status: auth.status });
+      }
+      if (process.env.LOCAL_UPLOADS_ENABLED !== 'true') {
+        return NextResponse.json(
+          {
+            error:
+              'Local upload storage is disabled in read-only cloud mode. Please provide an external audio URL instead.',
+          },
+          { status: 501 },
+        );
+      }
+    }
+
     const formData = await request.formData();
     const file = formData.get('file');
 
@@ -139,6 +158,12 @@ export async function POST(request: Request) {
       { status: 201 },
     );
   } catch (error) {
+    logEvent('error', {
+      route: '/api/uploaded-audio POST',
+      errCode: 'upload_failed',
+      httpStatus: 500,
+      message: error instanceof Error ? error.message : 'Failed to upload audio.',
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to upload audio.' },
       { status: 500 },
