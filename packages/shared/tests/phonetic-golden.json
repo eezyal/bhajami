@@ -1,0 +1,935 @@
+{
+  "wordCanonical": [
+    {
+      "input": "Naaraayana",
+      "expectedCanonical": "narayan",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Narayana",
+      "expectedCanonical": "narayan",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Naarayana",
+      "expectedCanonical": "narayan",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Narayan",
+      "expectedCanonical": "narayan",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Deva",
+      "expectedCanonical": "deva",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Devi",
+      "expectedCanonical": "devi",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Hara",
+      "expectedCanonical": "hara",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Hari",
+      "expectedCanonical": "hari",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Siva",
+      "expectedCanonical": "siva",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Seva",
+      "expectedCanonical": "seva",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Rama",
+      "expectedCanonical": "ram",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Ramo",
+      "expectedCanonical": "ramo",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Ram",
+      "expectedCanonical": "ram",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Vittala",
+      "expectedCanonical": "vitala",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Vitthala",
+      "expectedCanonical": "vithala",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Bhagawan",
+      "expectedCanonical": "bhagavan",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Bhagavan",
+      "expectedCanonical": "bhagavan",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Bhagavaan",
+      "expectedCanonical": "bhagavan",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Lakshmi",
+      "expectedCanonical": "lakshmi",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Laxmi",
+      "expectedCanonical": "lakshmi",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Kṛṣṇa",
+      "expectedCanonical": "krishn",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Śrī",
+      "expectedCanonical": "shri",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Gopāla",
+      "expectedCanonical": "gopal",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Gopala",
+      "expectedCanonical": "gopal",
+      "expectedSchwaFolded": true
+    },
+    {
+      "input": "Gopal",
+      "expectedCanonical": "gopal",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Sathya",
+      "expectedCanonical": "sathya",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Prashanthi",
+      "expectedCanonical": "prashanthi",
+      "expectedSchwaFolded": false
+    },
+    {
+      "input": "Nandalala",
+      "expectedCanonical": "nandalala",
+      "expectedSchwaFolded": false
+    }
+  ],
+  "sanitize": [
+    {
+      "raw": "2841 - Sundara Sundara Vinayaka | Sri Sathya Sai Bbajans #sai #bhajan",
+      "expected": "Sundara Sundara Vinayaka"
+    },
+    {
+      "raw": "045: Om Sai Ram | Sathya Sai Bhajans",
+      "expected": "Om Sai Ram"
+    },
+    {
+      "raw": "12. Manasa Bhajare Guru Charanam (Unplugged)",
+      "expected": "Manasa Bhajare Guru Charanam"
+    },
+    {
+      "raw": "Adi Narayana Sai Narayana [Baba Sings] #Prasanthi",
+      "expected": "Adi Narayana Sai Narayana"
+    },
+    {
+      "raw": "Govinda Hare Gopala Hare - Centenary Birthday Special Offering",
+      "expected": "Govinda Hare Gopala Hare"
+    },
+    {
+      "raw": "Arunachala Shiva | Prasanthi Mandir Live",
+      "expected": "Arunachala Shiva"
+    },
+    {
+      "raw": "Sarva Dharma Priya Deva (With Lyrics) | Radio Sai",
+      "expected": "Sarva Dharma Priya Deva"
+    },
+    {
+      "raw": "Shiva Shiva Shivaya Namah Om | SSSMC",
+      "expected": "Shiva Shiva Shivaya Namah Om"
+    },
+    {
+      "raw": "Asathoma Sath Gamaya - Unplugged",
+      "expected": "Asathoma Sath Gamaya"
+    },
+    {
+      "raw": "Subramanyam Subramanyam (Live) #Murugan",
+      "expected": "Subramanyam Subramanyam"
+    },
+    {
+      "raw": "999 - Jaya Ho Nataraja | With Bhajan Lyrics",
+      "expected": "Jaya Ho Nataraja"
+    },
+    {
+      "raw": "101 - Allah Bhajo Maula Bhajo - Baba Sings",
+      "expected": "Allah Bhajo Maula Bhajo"
+    },
+    {
+      "raw": "   Krishna   Madhava   (Audio)  ",
+      "expected": "Krishna Madhava"
+    },
+    {
+      "raw": "Hare Rama Hare Krishna (Full Song)",
+      "expected": "Hare Rama Hare Krishna"
+    },
+    {
+      "raw": "Gajanana Hey Gajanana [Gents]",
+      "expected": "Gajanana Hey Gajanana"
+    },
+    {
+      "raw": "Dattatreya Sadguru Deva | Shri Sathya Sai Bhajans",
+      "expected": "Dattatreya Sadguru Deva"
+    }
+  ],
+  "wordPair": [
+    {
+      "a": "Naaraayana",
+      "b": "Narayan",
+      "minScore": 0.9,
+      "expectedScore": 0.9928571428571429
+    },
+    {
+      "a": "Vittala",
+      "b": "Vitthala",
+      "minScore": 0.9,
+      "expectedScore": 0.9714285714285714
+    },
+    {
+      "a": "Shiva",
+      "b": "Siva",
+      "minScore": 0.9,
+      "expectedScore": 0.95
+    },
+    {
+      "a": "Sathya",
+      "b": "Satya",
+      "minScore": 0.9,
+      "expectedScore": 0.9666666666666667
+    },
+    {
+      "a": "Prashanthi",
+      "b": "Prashanti",
+      "minScore": 0.9,
+      "expectedScore": 0.98
+    },
+    {
+      "a": "Lakshmi",
+      "b": "Laxmi",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Bhagawan",
+      "b": "Bhagavan",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Kṛṣṇa",
+      "b": "Krishna",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Deva",
+      "b": "Devi",
+      "maxScore": 0.899999,
+      "expectedScore": 0.75
+    },
+    {
+      "a": "Hara",
+      "b": "Hari",
+      "maxScore": 0.899999,
+      "expectedScore": 0.75
+    },
+    {
+      "a": "Siva",
+      "b": "Seva",
+      "maxScore": 0.899999,
+      "expectedScore": 0.75
+    },
+    {
+      "a": "Rama",
+      "b": "Ramo",
+      "maxScore": 0.899999,
+      "expectedScore": 0.7375
+    }
+  ],
+  "titleSimilarity": [
+    {
+      "a": "Sai Naaraayana",
+      "b": "Sai Narayana",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Sai Naarayana",
+      "b": "Sai Narayan",
+      "minScore": 0.9,
+      "expectedScore": 0.9942857142857143
+    },
+    {
+      "a": "Adi Naaraayana Sai Naarayana",
+      "b": "Adi Narayana Sai Narayana",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "2841 - Sundara Sundara Vinayaka | Sri Sathya Sai Bbajans #sai",
+      "b": "Sundara Sundara Vinayaka",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Manasa Bhajare Guru Charanam",
+      "b": "Maanasa Bhajare Guru Charanam",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Panduranga Vittala",
+      "b": "Paanduranga Vitthala",
+      "minScore": 0.9,
+      "expectedScore": 0.9857142857142858
+    },
+    {
+      "a": "Arunachala Shiva",
+      "b": "Arunaachala Siva",
+      "minScore": 0.9,
+      "expectedScore": 0.975
+    },
+    {
+      "a": "Sathya Sai Deva",
+      "b": "Satya Sai Deva",
+      "minScore": 0.9,
+      "expectedScore": 0.9777777777777779
+    },
+    {
+      "a": "Prashanthi Nilaya Sai",
+      "b": "Prashanti Nilaya Sai",
+      "minScore": 0.9,
+      "expectedScore": 0.991111111111111
+    },
+    {
+      "a": "Gajanana Hey Gajanana",
+      "b": "Gajaanana He Gajaanana",
+      "minScore": 0.9,
+      "expectedScore": 0.9629629629629629
+    },
+    {
+      "a": "Govinda Hare Gopala Hare",
+      "b": "Goovinda Hare Gopaal Hare",
+      "minScore": 0.9,
+      "expectedScore": 0.9242857142857144
+    },
+    {
+      "a": "Om Sri Sai Ram",
+      "b": "Aum Shri Sai Rama",
+      "minScore": 0.9,
+      "expectedScore": 0.9815476190476191
+    },
+    {
+      "a": "Bhagawan Sri Sathya Sai",
+      "b": "Bhagavaan Shri Satya Sai",
+      "minScore": 0.9,
+      "expectedScore": 0.9720238095238096
+    },
+    {
+      "a": "Lakshmi Narayana",
+      "b": "Laxmi Naaraayan",
+      "minScore": 0.9,
+      "expectedScore": 0.9964285714285714
+    },
+    {
+      "a": "Aao Aao Nandalala",
+      "b": "Ao Ao Nandaalala",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Dattatreya Sadguru Deva",
+      "b": "Dattaatreya Sadguru Deva",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Shiva Shiva Shivaya Namah Om",
+      "b": "Siva Siva Sivaya Namaha Om",
+      "minScore": 0.9,
+      "expectedScore": 0.9288515406162466
+    },
+    {
+      "a": "Bala Gopal Jai Jai Sai Shyam",
+      "b": "Baala Gopaala Jaya Jaya Sai Shyaam",
+      "minScore": 0.9,
+      "expectedScore": 0.9306666666666668
+    },
+    {
+      "a": "Allah Bhajo Maula Bhajo",
+      "b": "Allaah Bhajo Maulaa Bhajo",
+      "minScore": 0.9,
+      "expectedScore": 1
+    },
+    {
+      "a": "Sarva Dharma Priya Deva",
+      "b": "Sarba Dharma Priya Deva",
+      "minScore": 0.9,
+      "expectedScore": 0.9784615384615385
+    },
+    {
+      "a": "Keshava Madhava",
+      "b": "Keshav Maadhav",
+      "minScore": 0.9,
+      "expectedScore": 0.9916666666666667
+    },
+    {
+      "a": "Madhava Krishna",
+      "b": "Maadhav Krishn",
+      "minScore": 0.9,
+      "expectedScore": 0.9916666666666667
+    },
+    {
+      "a": "Guru Deva",
+      "b": "Guru Devi",
+      "maxScore": 0.899999,
+      "expectedScore": 0.875
+    },
+    {
+      "a": "Hara Hara Mahadeva",
+      "b": "Hari Hari Mahadeva",
+      "maxScore": 0.899999,
+      "expectedScore": 0.8333333333333334
+    },
+    {
+      "a": "Shiva Shiva",
+      "b": "Seva Seva",
+      "maxScore": 0.899999,
+      "expectedScore": 0.75
+    },
+    {
+      "a": "Rama Rama",
+      "b": "Ramo Ramo",
+      "maxScore": 0.899999,
+      "expectedScore": 0.7375
+    },
+    {
+      "a": "Jaya Guru Deva",
+      "b": "Jaya Guru Devi",
+      "maxScore": 0.899999,
+      "expectedScore": 0.8888888888888888
+    },
+    {
+      "a": "Om Sai Ram",
+      "b": "Om Sai Krishna",
+      "maxScore": 0.719999,
+      "expectedScore": 0.4388888888888889
+    },
+    {
+      "a": "Sai Narayana",
+      "b": "Sai Shankara",
+      "maxScore": 0.719999,
+      "expectedScore": 0.395
+    },
+    {
+      "a": "Jaya Jagadisha Hare",
+      "b": "Jaya Panduranga",
+      "maxScore": 0.719999,
+      "expectedScore": 0.19999999999999998
+    },
+    {
+      "a": "Hey Ram Bhagawan",
+      "b": "Hey Shiva Bhagawan",
+      "maxScore": 0.719999,
+      "expectedScore": 0.3333333333333333
+    },
+    {
+      "a": "Om Sri Sai Nathaya",
+      "b": "Om Sri Ganeshaya",
+      "maxScore": 0.719999,
+      "expectedScore": 0.6476190476190476
+    },
+    {
+      "a": "Gopal Krishna",
+      "b": "Govind Madhav",
+      "maxScore": 0.719999,
+      "expectedScore": 0.16666666666666669
+    },
+    {
+      "a": "Subramanyam Subramanyam",
+      "b": "Shanmukha Shanmukha",
+      "maxScore": 0.719999,
+      "expectedScore": 0.2727272727272727
+    },
+    {
+      "a": "Vitthala Bhajo Sai Vitthala",
+      "b": "Rama Bhajo Sai Rama",
+      "maxScore": 0.719999,
+      "expectedScore": 0.46813186813186813
+    },
+    {
+      "a": "Bolo Narayana Jai Jai Vittala",
+      "b": "Bolo Shiva Shambho",
+      "maxScore": 0.719999,
+      "expectedScore": 0.26857142857142857
+    },
+    {
+      "a": "Daya Karo Sai Narayana",
+      "b": "Daya Karo Bhagawan Sankara",
+      "maxScore": 0.719999,
+      "expectedScore": 0.6948660714285714
+    },
+    {
+      "a": "Shambho Mahadeva",
+      "b": "Shankara Sadashiva",
+      "maxScore": 0.719999,
+      "expectedScore": 0.4097222222222222
+    },
+    {
+      "a": "Raghava Rama",
+      "b": "Madhava Krishna",
+      "maxScore": 0.719999,
+      "expectedScore": 0.4166666666666667
+    },
+    {
+      "a": "Om Namah Shivaya",
+      "b": "Om Namo Narayanaya",
+      "maxScore": 0.719999,
+      "expectedScore": 0.46666666666666673
+    }
+  ],
+  "lyricsOverlap": [
+    {
+      "linesA": [
+        "Aao Aao Nandalala (2)",
+        "Vrij Bhushana Nandalala (2 times)"
+      ],
+      "linesB": [
+        "Aao Aao Nandalala",
+        "Vrij Bhushana Nandalala"
+      ],
+      "minScore": 0.999999,
+      "expectedScore": 1
+    },
+    {
+      "linesA": [
+        "Adi Naaraayana Sai Naaraayana",
+        "Pannaga Shayana Sai Naaraayan"
+      ],
+      "linesB": [
+        "Adi Narayana Sai Narayana (2x)",
+        "Pannaga Shayana Sai Narayana"
+      ],
+      "minScore": 0.55,
+      "expectedScore": 1
+    },
+    {
+      "linesA": [
+        "Panduranga Vittala Hari Narayana",
+        "Purandara Vittala Hari Narayana"
+      ],
+      "linesB": [
+        "Paanduranga Vitthala Hari Naaraayan",
+        "Purandara Vitthala Hari Naaraayana"
+      ],
+      "minScore": 0.55,
+      "expectedScore": 0.9333333333333333
+    },
+    {
+      "linesA": [
+        "Sundara Sundara Vinayaka",
+        "Mangala Dayaka Vinayaka",
+        "Vighna Vinashaka Vinayaka"
+      ],
+      "linesB": [
+        "Sundara Sundara Vinayaka",
+        "Mangala Dayaka Vinayaka"
+      ],
+      "minScore": 0.55,
+      "expectedScore": 0.6926829268292682
+    },
+    {
+      "linesA": [
+        "Om Sai Ram",
+        "Subramanyam Shanmukha Natha"
+      ],
+      "linesB": [
+        "Om Sai Ram",
+        "Govinda Madhava Gopala Keshava"
+      ],
+      "maxScore": 0.549999,
+      "expectedScore": 0.2533333333333333
+    },
+    {
+      "linesA": [
+        "Gajanana Hey Gajanana",
+        "Gauri Thanaya Gajanana"
+      ],
+      "linesB": [
+        "Shambho Mahadeva Shiva Shambho",
+        "Kailasa Vasa Shiva Shambho"
+      ],
+      "maxScore": 0.549999,
+      "expectedScore": 0
+    },
+    {
+      "linesA": [
+        "Kṛṣṇa, Mādhava!",
+        "Gopāla, Keśava."
+      ],
+      "linesB": [
+        "Krishna Madhava",
+        "Gopal Keshava"
+      ],
+      "minScore": 0.999999,
+      "expectedScore": 1
+    },
+    {
+      "linesA": [
+        "Arunachala Shiva Arunachala Shiva",
+        "Om Namah Shivaya Om Namah Shivaya"
+      ],
+      "linesB": [
+        "Om Namah Shivaya Om Namah Shivaya",
+        "Arunachala Siva Arunachala Siva"
+      ],
+      "minScore": 0.55,
+      "expectedScore": 0.9333333333333333
+    },
+    {
+      "linesA": [],
+      "linesB": [
+        "Sai Ram"
+      ],
+      "maxScore": 0.000001,
+      "expectedScore": 0
+    },
+    {
+      "linesA": [
+        "Daya Karo Sai Narayana",
+        "Karuna Sagara Narayana",
+        "Prashanti Vasa Narayana"
+      ],
+      "linesB": [
+        "Bolo Jai Jai Kar",
+        "Sathya Sai Maharaj"
+      ],
+      "maxScore": 0.549999,
+      "expectedScore": 0.021052631578947368
+    }
+  ],
+  "evaluateMatch": [
+    {
+      "name": "doNotMergePairs blocks even exact title and lyrics match",
+      "queryTitle": "Guru Deva",
+      "queryId": "yt_test_1",
+      "queryLyrics": [
+        "Guru Deva Guru Govinda",
+        "Sathya Sai Guru Deva"
+      ],
+      "candidates": [
+        {
+          "id": "guru-deva",
+          "title": "Guru Deva",
+          "lyricsLines": [
+            "Guru Deva Guru Govinda",
+            "Sathya Sai Guru Deva"
+          ]
+        }
+      ],
+      "doNotMergePairs": [
+        "guru-deva__yt_test_1"
+      ],
+      "expectedStatus": "unmatched",
+      "expectedBestTargetId": null,
+      "expectedReason": "do_not_merge_excluded",
+      "expectedScore": 0
+    },
+    {
+      "name": "doNotMergePairs blocks one candidate while allowing valid second candidate",
+      "queryTitle": "Sai Narayana",
+      "queryId": "yt_test_2",
+      "candidates": [
+        {
+          "id": "blocked-sai-narayan",
+          "title": "Sai Narayana"
+        },
+        {
+          "id": "adi-narayana-sai-narayana",
+          "title": "Sai Naaraayan"
+        }
+      ],
+      "doNotMergePairs": [
+        "blocked-sai-narayan__yt_test_2"
+      ],
+      "expectedStatus": "verified",
+      "expectedBestTargetId": "adi-narayana-sai-narayana",
+      "expectedReason": "high_confidence_title",
+      "expectedScore": 0.9942857142857143
+    },
+    {
+      "name": "entityAliases yields immediate 1.0 verified match",
+      "queryTitle": "Sai Baba Song",
+      "candidates": [
+        {
+          "id": "manasa-bhajare",
+          "title": "Manasa Bhajare Guru Charanam"
+        }
+      ],
+      "entityAliases": {
+        "sai baba song": "manasa-bhajare"
+      },
+      "expectedStatus": "verified",
+      "expectedBestTargetId": "manasa-bhajare",
+      "expectedReason": "entity_alias",
+      "expectedScore": 1
+    },
+    {
+      "name": "doNotMergePairs takes precedence over entityAliases",
+      "queryTitle": "Sai Baba Song",
+      "queryId": "yt_alias_blocked",
+      "candidates": [
+        {
+          "id": "manasa-bhajare",
+          "title": "Completely Unrelated"
+        }
+      ],
+      "entityAliases": {
+        "sai baba song": "manasa-bhajare"
+      },
+      "doNotMergePairs": [
+        "manasa-bhajare__yt_alias_blocked"
+      ],
+      "expectedStatus": "unmatched",
+      "expectedBestTargetId": null,
+      "expectedReason": "do_not_merge_excluded",
+      "expectedScore": 0
+    },
+    {
+      "name": "lyrics overlap >= 0.55 promotes title variant to verified",
+      "queryTitle": "Om Sai Narayana",
+      "queryLyrics": [
+        "Adi Naaraayana Sai Naaraayana",
+        "Pannaga Shayana Sai Naaraayan"
+      ],
+      "candidates": [
+        {
+          "id": "adi-narayana",
+          "title": "Sai Narayana",
+          "lyricsLines": [
+            "Adi Narayana Sai Narayana",
+            "Pannaga Shayana Sai Narayana"
+          ]
+        }
+      ],
+      "expectedStatus": "verified",
+      "expectedBestTargetId": "adi-narayana",
+      "expectedReason": "lyrics_confirmed",
+      "expectedScore": 1
+    },
+    {
+      "name": "lyrics overlap < 0.55 downgrades identical title to needs_verification",
+      "queryTitle": "Sai Narayana",
+      "queryLyrics": [
+        "Gajanana Hey Gajanana",
+        "Prathama Poojitha Gajanana"
+      ],
+      "candidates": [
+        {
+          "id": "sai-narayana",
+          "title": "Sai Narayana",
+          "lyricsLines": [
+            "Adi Narayana Sai Narayana",
+            "Pannaga Shayana Sai Narayana"
+          ]
+        }
+      ],
+      "expectedStatus": "needs_verification",
+      "expectedBestTargetId": "sai-narayana",
+      "expectedReason": "lyrics_mismatch",
+      "expectedScore": 1
+    },
+    {
+      "name": "unique high-confidence title match succeeds without lyrics",
+      "queryTitle": "2841 - Panduranga Vitthala | Sri Sathya Sai Bbajans #sai (Unplugged)",
+      "candidates": [
+        {
+          "id": "panduranga-vittala",
+          "title": "Paanduranga Vittala"
+        },
+        {
+          "id": "shiva-shambho",
+          "title": "Shambho Mahadeva"
+        }
+      ],
+      "expectedStatus": "verified",
+      "expectedBestTargetId": "panduranga-vittala",
+      "expectedReason": "high_confidence_title",
+      "expectedScore": 0.9857142857142858
+    },
+    {
+      "name": "ambiguous title matching >= 0.90 on two candidates routes to needs_verification",
+      "queryTitle": "Govinda Hare Gopala Hare",
+      "candidates": [
+        {
+          "id": "govinda-hare-1",
+          "title": "Govinda Hare Gopala Hare"
+        },
+        {
+          "id": "govinda-hare-2",
+          "title": "Goovinda Hare Gopaal Hare"
+        }
+      ],
+      "expectedStatus": "needs_verification",
+      "expectedBestTargetId": "govinda-hare-1",
+      "expectedReason": "ambiguous_title",
+      "expectedScore": 1
+    },
+    {
+      "name": "doubt band 0.72..0.89 routes to needs_verification",
+      "queryTitle": "Om Sai Narayana",
+      "candidates": [
+        {
+          "id": "sai-narayana",
+          "title": "Sai Narayana"
+        }
+      ],
+      "expectedStatus": "needs_verification",
+      "expectedBestTargetId": "sai-narayana",
+      "expectedReason": "doubt_band",
+      "expectedScore": 0.8333333333333334
+    },
+    {
+      "name": "distinct bhajan below 0.72 returns unmatched",
+      "queryTitle": "Subramanyam Shanmukha",
+      "candidates": [
+        {
+          "id": "aao-aao-nandalala",
+          "title": "Aao Aao Nandalala"
+        },
+        {
+          "id": "arunachala-shiva",
+          "title": "Arunachala Shiva"
+        }
+      ],
+      "expectedStatus": "unmatched",
+      "expectedBestTargetId": null,
+      "expectedReason": "below_threshold",
+      "expectedScore": 0.25757575757575757
+    },
+    {
+      "name": "Guru Deva vs Guru Devi minimal pair does not auto-merge",
+      "queryTitle": "Guru Devi",
+      "candidates": [
+        {
+          "id": "guru-deva",
+          "title": "Guru Deva"
+        }
+      ],
+      "expectedStatus": "needs_verification",
+      "expectedBestTargetId": "guru-deva",
+      "expectedReason": "doubt_band",
+      "expectedScore": 0.875
+    },
+    {
+      "name": "Hara Hara Mahadeva vs Hari Hari Mahadeva minimal pair does not auto-merge",
+      "queryTitle": "Hara Hara Mahadeva",
+      "candidates": [
+        {
+          "id": "hari-hari-mahadeva",
+          "title": "Hari Hari Mahadeva"
+        }
+      ],
+      "expectedStatus": "needs_verification",
+      "expectedBestTargetId": "hari-hari-mahadeva",
+      "expectedReason": "doubt_band",
+      "expectedScore": 0.8333333333333334
+    },
+    {
+      "name": "Shiva Shiva vs Seva Seva minimal pair stays distinct (unmatched or doubt)",
+      "queryTitle": "Shiva Shiva",
+      "candidates": [
+        {
+          "id": "seva-seva",
+          "title": "Seva Seva"
+        }
+      ],
+      "expectedStatus": "needs_verification",
+      "expectedBestTargetId": "seva-seva",
+      "expectedReason": "doubt_band",
+      "expectedScore": 0.75
+    },
+    {
+      "name": "single-line query lyrics skips lyrics gate and uses title similarity",
+      "queryTitle": "Arunaachala Siva",
+      "queryLyrics": [
+        "Only one line present"
+      ],
+      "candidates": [
+        {
+          "id": "arunachala-shiva",
+          "title": "Arunachala Shiva",
+          "lyricsLines": [
+            "Line one",
+            "Line two"
+          ]
+        }
+      ],
+      "expectedStatus": "verified",
+      "expectedBestTargetId": "arunachala-shiva",
+      "expectedReason": "high_confidence_title",
+      "expectedScore": 0.975
+    },
+    {
+      "name": "empty candidate list returns unmatched no_candidates",
+      "queryTitle": "Any Title",
+      "candidates": [],
+      "expectedStatus": "unmatched",
+      "expectedBestTargetId": null,
+      "expectedReason": "no_candidates",
+      "expectedScore": 0
+    },
+    {
+      "name": "clean case-folded entityAlias lookup across messy channel title",
+      "queryTitle": "502 - Baba Sings Special | Prasanthi Mandir Live",
+      "candidates": [
+        {
+          "id": "manasa-bhajare",
+          "title": "Manasa Bhajare Guru Charanam"
+        }
+      ],
+      "entityAliases": {
+        "baba sings special": "manasa-bhajare"
+      },
+      "expectedStatus": "verified",
+      "expectedBestTargetId": "manasa-bhajare",
+      "expectedReason": "entity_alias",
+      "expectedScore": 1
+    }
+  ]
+}

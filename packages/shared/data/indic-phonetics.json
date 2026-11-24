@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "thresholds": {
+    "autoMerge": 0.9,
+    "reviewMin": 0.72,
+    "lyricsOverlapMin": 0.55,
+    "glossaryVarMin": 0.78
+  },
+  "schwaFoldPenalty": 0.05,
+  "diacriticMap": {
+    "ā": "a",
+    "á": "a",
+    "à": "a",
+    "â": "a",
+    "ã": "a",
+    "ä": "a",
+    "å": "a",
+    "ī": "i",
+    "í": "i",
+    "ì": "i",
+    "î": "i",
+    "ï": "i",
+    "ū": "u",
+    "ú": "u",
+    "ù": "u",
+    "û": "u",
+    "ü": "u",
+    "ē": "e",
+    "é": "e",
+    "è": "e",
+    "ê": "e",
+    "ë": "e",
+    "ō": "o",
+    "ó": "o",
+    "ò": "o",
+    "ô": "o",
+    "õ": "o",
+    "ö": "o",
+    "ṛ": "ri",
+    "ṝ": "ri",
+    "ḷ": "l",
+    "ḹ": "l",
+    "ṅ": "n",
+    "ñ": "n",
+    "ṇ": "n",
+    "ṭ": "t",
+    "ḍ": "d",
+    "ś": "sh",
+    "ṣ": "sh",
+    "ç": "sh",
+    "ḥ": "h",
+    "ṁ": "m",
+    "ṃ": "m"
+  },
+  "sanitizer": {
+    "leadingNumberRegex": "^\\s*\\d{1,5}\\s*[-–—:.|)]\\s*",
+    "pipeSuffixRegexes": [
+      "\\|\\s*(?:sri\\s+|shri\\s+)?sathya\\s+sai\\s+b[bh]?ajans.*$",
+      "\\|\\s*prasanthi\\s+mandir\\s+live.*$",
+      "\\|\\s*sss\\s*mc.*$",
+      "\\|\\s*radio\\s+sai.*$",
+      "\\|\\s*(?:with\\s+)?bhajan\\s+lyrics.*$",
+      "\\|\\s*with\\s+lyrics.*$"
+    ],
+    "hashtagRegex": "#[a-zA-Z0-9_]+",
+    "bracketedTagRegex": "[\\(\\[\\{]\\s*(?:unplugged|baba\\s+sings|swami\\s+sings|centenary\\s+birthday\\s+special\\s+offering|centenary\\s+special|special\\s+offering|with\\s+lyrics|lyrics|live|audio|video|official|full\\s+song|hd|4k|male|female|gents|ladies|karaoke|instrumental)\\s*[\\)\\]\\}]",
+    "trailingTagRegex": "(?:\\s*[-–—|]\\s*|\\s+)(?:centenary\\s+birthday\\s+special\\s+offering|centenary\\s+special\\s+offering|baba\\s+sings|swami\\s+sings|unplugged|with\\s+lyrics)\\s*$"
+  },
+  "repetitionRegex": "\\(\\s*\\d+\\s*(?:times?|x)?\\s*\\)",
+  "punctuationRegex": "[\\x21-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e\\u2000-\\u206f\\u00a0-\\u00bf]+",
+  "vowelAndConsonantRules": [
+    ["aa+", "a"],
+    ["(?:ee+|ii+)", "i"],
+    ["(?:oo+|uu+)", "u"],
+    ["w", "v"],
+    ["x", "ksh"]
+  ],
+  "tokenAliases": {
+    "aum": "om"
+  },
+  "collapseDoubledConsonantsRegex": "([bcdfghjklmnpqrstvwxz])\\1+",
+  "nasalStemExceptions": [
+    "narayan",
+    "bhagavan",
+    "gopal",
+    "keshav",
+    "madhav",
+    "raghav",
+    "govind",
+    "krishn",
+    "ram",
+    "shyam",
+    "ganesh",
+    "jagadish",
+    "mahesh",
+    "mukund",
+    "anand"
+  ],
+  "substitutionCosts": {
+    "interiorVowelPairs": [
+      ["e", "a", 0.3]
+    ],
+    "singleCharPairs": [
+      ["v", "b", 0.35]
+    ],
+    "digraphPairs": [
+      ["sh", "s", 0.25],
+      ["ksh", "sh", 0.25],
+      ["bh", "b", 0.2],
+      ["dh", "d", 0.2],
+      ["th", "t", 0.2],
+      ["kh", "k", 0.2],
+      ["gh", "g", 0.2],
+      ["ph", "p", 0.2]
+    ],
+    "defaultEdit": 1.0
+  },
+  "idfWeights": {
+    "om": 0.25,
+    "aum": 0.25,
+    "sai": 0.25,
+    "sri": 0.25,
+    "shri": 0.25,
+    "jaya": 0.25,
+    "jai": 0.25,
+    "hey": 0.25,
+    "he": 0.25,
+    "bhagavan": 0.25,
+    "baba": 0.25,
+    "deva": 0.25,
+    "namah": 0.25,
+    "namo": 0.25
+  },
+  "lyricsWeights": {
+    "lineJaccard": 0.6,
+    "char4gramJaccard": 0.4
+  }
+}
