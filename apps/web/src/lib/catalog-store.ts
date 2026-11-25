@@ -734,7 +734,7 @@ export async function getCatalogIndex(): Promise<CatalogIndexPayload & { pending
   const { catalog, pendingCount } = await getMergedCatalogWithCloud();
   return {
     generatedAt: catalog.generatedAt,
-    version: 1,
+    version: 0,
     stats: catalog.stats,
     entries: catalog.bhajans.map(projectBhajanToIndexEntry),
     pendingCount,

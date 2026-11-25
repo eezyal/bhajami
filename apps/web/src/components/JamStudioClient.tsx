@@ -305,9 +305,11 @@ export function JamStudioClient({
       }
       const cached = await getCachedCatalogIndex();
       let currentVersion = initialIndex.version;
+      let currentEntriesCount = initialIndex.entries.length;
       if (!cancelled && cached && cached.version > initialIndex.version) {
         setCatalogIndex(cached);
         currentVersion = cached.version;
+        currentEntriesCount = cached.entries.length;
       } else {
         void setCachedCatalogIndex(initialIndex);
       }
@@ -317,8 +319,13 @@ export function JamStudioClient({
       try {
         const snap = await getDoc(doc(db, 'catalogMeta', 'latest'));
         if (!cancelled && snap.exists()) {
-          const remoteVersion = Number(snap.data()?.version ?? 0);
-          if (remoteVersion > currentVersion) {
+          const data = snap.data();
+          const remoteVersion = Number(data?.version ?? 0);
+          const remoteTotal = Number(data?.stats?.totalBhajans ?? 0);
+          if (
+            remoteVersion > currentVersion ||
+            (remoteTotal > 0 && remoteTotal !== currentEntriesCount)
+          ) {
             await refreshCatalog();
           }
         }
@@ -340,6 +347,15 @@ export function JamStudioClient({
     () => catalogIndex.entries.filter((entry) => likedSet.has(entry.id)),
     [catalogIndex.entries, likedSet],
   );
+
+  const MIN_LIKES_FOR_YOU = 3;
+  const canShowForYou = likedEntries.length >= MIN_LIKES_FOR_YOU;
+
+  useEffect(() => {
+    if (streamMode === 'for_you' && !canShowForYou) {
+      setStreamMode('discovery');
+    }
+  }, [canShowForYou, streamMode]);
 
   const similarRecs = useMemo(
     () => computeSimilarBhajans(likedIds, catalogIndex.entries, { limit: 18 }),
@@ -830,17 +846,19 @@ export function JamStudioClient({
                 >
                   ▶ Start Random Stream
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-success"
-                  onClick={() => {
-                    setStreamMode('for_you');
-                    setStreamSeed((s) => s + 1);
-                    setActiveView('stream');
-                  }}
-                >
-                  ✨ For You (Similar Raga)
-                </button>
+                {canShowForYou && (
+                  <button
+                    type="button"
+                    className="btn btn-success"
+                    onClick={() => {
+                      setStreamMode('for_you');
+                      setStreamSeed((s) => s + 1);
+                      setActiveView('stream');
+                    }}
+                  >
+                    ✨ For You
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn"

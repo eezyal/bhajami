@@ -10,6 +10,11 @@ on:
         required: false
         default: '300'
         type: string
+      skip_sairhythms:
+        description: 'Skip Sai Rhythms crawl (fast index-only rebuild from existing Firestore docs)'
+        required: false
+        default: false
+        type: boolean
       run_youtube:
         description: 'Run YouTube sync after Sai Rhythms (recommended after initial Sai Rhythms backfill finishes)'
         required: false
@@ -70,6 +75,7 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           MAX_SONGS: ${{ inputs.max_songs_per_run || '300' }}
+          SKIP_SAIRHYTHMS: ${{ inputs.skip_sairhythms || 'false' }}
           RUN_YOUTUBE: ${{ inputs.run_youtube || 'false' }}
           MAX_YT_VIDEOS: ${{ inputs.max_youtube_videos || '200' }}
         run: |
@@ -83,12 +89,16 @@ jobs:
           chmod 600 "$SA_PATH"
           export GOOGLE_APPLICATION_CREDENTIALS="$SA_PATH"
 
-          echo "Running Sai Rhythms delta slice (max ${MAX_SONGS} songs)..."
-          python3 tools/catalog-pipeline/crawl_sairhythms.py \
-            --delta-only \
-            --max-songs-per-run "$MAX_SONGS" \
-            --publish-firestore \
-            --max-firestore-writes 4000
+          if [ "$SKIP_SAIRHYTHMS" != "true" ]; then
+            echo "Running Sai Rhythms delta slice (max ${MAX_SONGS} songs)..."
+            python3 tools/catalog-pipeline/crawl_sairhythms.py \
+              --delta-only \
+              --max-songs-per-run "$MAX_SONGS" \
+              --publish-firestore \
+              --max-firestore-writes 4000
+          else
+            echo "Sai Rhythms step skipped (skip_sairhythms=true)."
+          fi
 
           if [ "$RUN_YOUTUBE" = "true" ] && [ -n "$YOUTUBE_API_KEY" ]; then
             echo "Running incremental YouTube Prasanthi Mandir Live sync (max ${MAX_YT_VIDEOS})..."

@@ -107,14 +107,16 @@ export function StreamRadioView({
             >
               Random Stream
             </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${mode === 'for_you' ? 'btn-primary' : ''}`}
-              aria-pressed={mode === 'for_you'}
-              onClick={() => onModeChange('for_you')}
-            >
-              For You (Similar Raga)
-            </button>
+            {likedSet.size >= 3 && (
+              <button
+                type="button"
+                className={`btn btn-sm ${mode === 'for_you' ? 'btn-primary' : ''}`}
+                aria-pressed={mode === 'for_you'}
+                onClick={() => onModeChange('for_you')}
+              >
+                For You
+              </button>
+            )}
             <button
               type="button"
               className={`btn btn-sm ${mode === 'liked_only' ? 'btn-primary' : ''}`}
@@ -340,7 +342,7 @@ export function StreamRadioView({
         </section>
       )}
 
-      {similarRecs.length > 0 && (
+      {likedSet.size > 0 && similarRecs.length > 0 && (
         <section className="rec-shelf-section" aria-label="Similar Raga Recommendations">
           <div className="rec-shelf-header">
             <h2>Recommended From Your Liked Ragas</h2>
