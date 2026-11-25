@@ -126,7 +126,7 @@ export function StreamRadioView({
             <div>
               <h1 style={{ margin: 0, fontSize: '1.45rem' }}>Continuous Bhajan Stream</h1>
               <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
-                Audio mode streams direct MP3 tracks with zero video; switch to Video anytime to watch YouTube recordings.
+                Plays all bhajans audio-first whenever a direct MP3 exists; YouTube-only tracks play inline and switch cleanly between Audio and Video.
               </p>
             </div>
             <div className="stream-controls-row">
@@ -324,6 +324,9 @@ export function StreamRadioView({
                   {hasAudioOption && !hasVideoOption && (
                     <span className="badge badge-verified">Audio-only</span>
                   )}
+                  {isYouTubeOnly && mediaMode === 'audio' && (
+                    <span className="badge">YouTube-only (no MP3 yet)</span>
+                  )}
                 </div>
                 <h2 style={{ margin: '0 0 0.2rem', fontSize: '1.35rem' }}>{currentEntry.title}</h2>
                 {currentBhajan?.gentsPitch?.raw || currentBhajan?.ladiesPitch?.raw ? (
@@ -367,49 +370,52 @@ export function StreamRadioView({
             </div>
           )}
 
-          {/* Audio stays mounted across full <-> minimized for zero-interruption MP3 playback; video never renders in Audio or Minimized modes */}
+          {/* Audio stays mounted across full <-> minimized for zero-interruption MP3 playback; video never renders in Minimized mode */}
           <div className={minimized ? 'mini-stream-audio-slot' : undefined}>
             {audioUrl ? (
-              <audio
-                ref={audioRef}
-                key={`${currentEntry.id}-${audioUrl}`}
-                controls={!minimized}
-                autoPlay={autoPlay}
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onEnded={() => {
-                  setIsPlaying(false);
-                  if (autoPlay) onNext();
-                }}
-                src={audioUrl}
-                style={minimized ? { display: 'none' } : { width: '100%' }}
-              />
+              <div style={{ display: 'grid', gap: '0.5rem' }}>
+                <audio
+                  ref={audioRef}
+                  key={`${currentEntry.id}-${audioUrl}`}
+                  controls={!minimized}
+                  autoPlay={autoPlay}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onEnded={() => {
+                    setIsPlaying(false);
+                    if (autoPlay) onNext();
+                  }}
+                  src={audioUrl}
+                  style={minimized ? { display: 'none' } : { width: '100%' }}
+                />
+                {!minimized && hasVideoOption && mediaMode === 'audio' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    <span className="field-hint" style={{ margin: 0 }}>
+                      Direct MP3 audio · Video available
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={() => onMediaModeChange('video')}
+                    >
+                      Show Video
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : minimized ? null : loadingDetail && !currentBhajan ? (
               <p className="field-hint" style={{ margin: 0 }}>
                 Loading stream audio and lyrics…
               </p>
-            ) : isYouTubeOnly && mediaMode === 'audio' ? (
-              <div
-                className="control-box"
-                style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}
-              >
-                <p className="field-hint" style={{ margin: 0 }}>
-                  This bhajan currently has a YouTube video recording only (Audio mode skips video to save data).
-                </p>
-                <div className="stream-controls-row">
-                  <button
-                    type="button"
-                    className="btn btn-sm btn-primary"
-                    onClick={() => onMediaModeChange('video')}
-                  >
-                    Switch to Video
-                  </button>
-                  <button type="button" className="btn btn-sm" onClick={onNext} disabled={queue.length <= 1}>
-                    Next Audio Bhajan ▶
-                  </button>
-                </div>
-              </div>
-            ) : activeRec?.youtubeVideoId && mediaMode === 'video' ? (
+            ) : activeRec?.youtubeVideoId ? (
               <YouTubeSegmentPlayer
                 videoId={activeRec.youtubeVideoId}
                 title={activeRec.label}
@@ -417,7 +423,7 @@ export function StreamRadioView({
                 endSec={activeRec.endSec}
                 embeddable={activeRec.embeddable}
                 autoPlay={autoPlay}
-                onMediaModeChange={onMediaModeChange}
+                onMediaModeChange={mediaMode === 'video' ? onMediaModeChange : undefined}
                 onEnded={autoPlay ? onNext : undefined}
               />
             ) : currentBhajan === null && onRetryDetail ? (

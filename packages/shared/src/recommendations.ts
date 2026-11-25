@@ -247,7 +247,8 @@ export function entryHasDirectAudio(entry: BhajanIndexEntry): boolean {
 
 /**
  * Build a playable-first randomized stream queue for Discovery, For You, or Liked Radio.
- * When `mediaMode` is `'audio'` (default), restricts the queue to direct-audio entries when available.
+ * Includes all playable bhajans (both direct-audio MP3 and YouTube A/V entries) in a unified
+ * stream; `pickStreamRecording` handles preferring MP3 audio or YouTube video per track.
  */
 export function buildStreamQueue(
   entries: readonly BhajanIndexEntry[],
@@ -263,7 +264,6 @@ export function buildStreamQueue(
   const rng = makeRng(options.seed);
   const deityWanted = options.deityFilter?.trim().toLowerCase() || '';
   const ragaWanted = normalizeRagaKey(options.ragaFilter);
-  const mediaMode: StreamMediaMode = options.mediaMode === 'video' ? 'video' : 'audio';
 
   const matching = entries.filter((e) => {
     if (deityWanted && deityWanted !== 'all') {
@@ -276,21 +276,11 @@ export function buildStreamQueue(
   });
 
   const playable = matching.filter((e) => e.recordingCount > 0);
-  const audioPlayable = playable.filter(entryHasDirectAudio);
-  const pool =
-    mediaMode === 'audio' && audioPlayable.length > 0
-      ? audioPlayable
-      : playable.length > 0
-        ? playable
-        : matching;
+  const pool = playable.length > 0 ? playable : matching;
 
   if (options.mode === 'liked_only') {
     const likedAllSet = resolveLikedSet(options.likedIds, matching);
     const likedMatches = matching.filter((e) => likedAllSet.has(e.id));
-    if (mediaMode === 'audio') {
-      const likedDirectAudio = likedMatches.filter(entryHasDirectAudio);
-      if (likedDirectAudio.length > 0) return shuffleWithRng(likedDirectAudio, rng);
-    }
     const likedPlayable = likedMatches.filter((e) => e.recordingCount > 0);
     return shuffleWithRng(likedPlayable.length > 0 ? likedPlayable : likedMatches, rng);
   }
@@ -354,8 +344,9 @@ export function isYouTubeRecording(rec: RecordingSource): boolean {
 }
 
 /**
- * Selects the optimal recording according to the user's sticky `audio` (Data Saver) vs `video`
- * preference while falling back gracefully for audio-only (e.g. Sai Rhythms) or YouTube-only bhajans.
+ * Selects the optimal recording according to the user's sticky `'audio'` (direct MP3 first) vs
+ * `'video'` (YouTube first) preference while falling back cleanly for audio-only or YouTube-only
+ * bhajans across the unified stream queue.
  */
 export function pickStreamRecording(
   bhajan: Bhajan | null | undefined,

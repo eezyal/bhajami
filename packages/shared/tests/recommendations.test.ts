@@ -187,7 +187,7 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
     assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').hasAudioOption, false);
   });
 
-  it('filters discovery queue to direct-audio entries in audio mode and includes YouTube in video mode', () => {
+  it('includes both direct-audio and YouTube tracks in unified discovery queues across modes', () => {
     const mixedEntries: BhajanIndexEntry[] = [
       {
         id: 'yt-only-track',
@@ -224,8 +224,8 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
       seed: 1,
     });
     assert.deepEqual(
-      audioQueue.map((e) => e.id),
-      ['mp3-track'],
+      audioQueue.map((e) => e.id).sort(),
+      ['mp3-track', 'yt-only-track'],
     );
 
     const videoQueue = buildStreamQueue(mixedEntries, {
@@ -234,6 +234,9 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
       mediaMode: 'video',
       seed: 1,
     });
-    assert.equal(videoQueue.length, 2);
+    assert.deepEqual(
+      videoQueue.map((e) => e.id).sort(),
+      ['mp3-track', 'yt-only-track'],
+    );
   });
 });

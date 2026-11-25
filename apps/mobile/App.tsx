@@ -352,15 +352,14 @@ export default function App() {
         likedIds: likedIdsRef.current,
         deityFilter: streamDeity,
         ragaFilter: streamRaga,
-        mediaMode: streamMediaMode,
         seed: streamSeed,
       }),
-    [catalogIndex.entries, streamDeity, streamMediaMode, streamMode, streamRaga, streamSeed],
+    [catalogIndex.entries, streamDeity, streamMode, streamRaga, streamSeed],
   );
 
   useEffect(() => {
     setStreamIdx(0);
-  }, [streamDeity, streamMediaMode, streamMode, streamRaga, streamSeed]);
+  }, [streamDeity, streamMode, streamRaga, streamSeed]);
 
   const safeStreamIdx =
     streamQueue.length > 0 ? Math.min(streamIdx, streamQueue.length - 1) : 0;
@@ -800,8 +799,8 @@ export default function App() {
                   Your Sathya Sai Bhajans Companion
                 </Text>
                 <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                  Listen continuously in Audio mode (MP3) or switch to Video anytime, curate favorites
-                  with ♥, and explore multi-script Studio sheets.
+                  Stream all bhajans audio-first (MP3 when available, inline YouTube otherwise),
+                  curate favorites with ♥, and explore multi-script Studio sheets.
                 </Text>
 
                 <View style={styles.heroActions}>
@@ -1999,6 +1998,13 @@ export default function App() {
                       </Text>
                     </View>
                   )}
+                  {!streamHasAudioOption && streamHasVideoOption && streamMediaMode === 'audio' && (
+                    <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                      <Text style={[styles.badgeText, { color: theme.textMuted }]}>
+                        YouTube-only (no MP3 yet)
+                      </Text>
+                    </View>
+                  )}
                 </View>
 
                 <Text style={[styles.bhajanTitle, { color: theme.text }]}>
@@ -2054,7 +2060,7 @@ export default function App() {
               </View>
             )}
 
-            {/* No video inset ever rendered in Audio mode or Minimized mode; MP3 audio keeps playing cleanly */}
+            {/* No video inset ever rendered in Minimized mode; MP3 audio keeps playing cleanly */}
             {streamIsMinimized ? null : streamLoadingDetail && !activeStreamBhajan ? (
               <View style={styles.inlineRow}>
                 <ActivityIndicator color={theme.accent} />
@@ -2084,51 +2090,43 @@ export default function App() {
                 </Pressable>
               </View>
             ) : streamPlayback.kind === 'audio' ? (
-              <Pressable
-                onPress={() => void playAudioUri(streamPlayback.uri)}
-                style={[styles.playBtn, { backgroundColor: theme.accent }]}
-              >
-                {isLoadingAudio ? (
-                  <ActivityIndicator color={theme.accentText} />
-                ) : (
-                  <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                    {isAudioPlaying ? 'Pause Audio' : '▶ Play Audio'}
-                  </Text>
+              <View style={styles.sectionStack}>
+                <Pressable
+                  onPress={() => void playAudioUri(streamPlayback.uri)}
+                  style={[styles.playBtn, { backgroundColor: theme.accent }]}
+                >
+                  {isLoadingAudio ? (
+                    <ActivityIndicator color={theme.accentText} />
+                  ) : (
+                    <Text style={[styles.playBtnText, { color: theme.accentText }]}>
+                      {isAudioPlaying ? 'Pause Audio' : '▶ Play Audio'}
+                    </Text>
+                  )}
+                </Pressable>
+                {streamHasVideoOption && streamMediaMode === 'audio' && (
+                  <View style={styles.inlineRow}>
+                    <Text style={[styles.statusText, { color: theme.textMuted, flex: 1 }]}>
+                      Direct MP3 audio · Video available
+                    </Text>
+                    <Pressable
+                      onPress={() => handleMediaModeChange('video')}
+                      style={[
+                        styles.smallBtn,
+                        {
+                          borderWidth: 1,
+                          borderColor: theme.border,
+                          backgroundColor: theme.surfaceRaised,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.smallBtnText, { color: theme.text }]}>
+                        Show Video
+                      </Text>
+                    </Pressable>
+                  </View>
                 )}
-              </Pressable>
-            ) : streamPlayback.kind === 'youtube' && streamMediaMode === 'audio' ? (
-              <View
-                style={[
-                  styles.pitchBox,
-                  { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
-                ]}
-              >
-                <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                  This bhajan currently has a YouTube video recording only (Audio mode skips video).
-                </Text>
-                <View style={styles.recActionsRow}>
-                  <Pressable
-                    onPress={() => handleMediaModeChange('video')}
-                    style={[styles.smallBtn, { backgroundColor: theme.accent }]}
-                  >
-                    <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                      Switch to Video
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => advanceStream(1)}
-                    style={[
-                      styles.smallBtn,
-                      { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
-                    ]}
-                  >
-                    <Text style={[styles.smallBtnText, { color: theme.text }]}>
-                      Next Audio Bhajan ▶
-                    </Text>
-                  </Pressable>
-                </View>
               </View>
-            ) : streamPlayback.kind === 'youtube' && streamMediaMode === 'video' ? (
+            ) : streamPlayback.kind === 'youtube' ? (
               <MobileYouTubePlayer
                 ref={ytStreamRef}
                 videoId={streamPlayback.videoId}
@@ -2137,7 +2135,7 @@ export default function App() {
                 endSec={streamPreferredRec?.endSec}
                 embeddable={streamPlayback.embeddable}
                 autoPlay={streamAutoPlay}
-                onMediaModeChange={handleMediaModeChange}
+                onMediaModeChange={streamMediaMode === 'video' ? handleMediaModeChange : undefined}
                 onPlayStateChange={setStreamYtPlaying}
                 onEnded={() => {
                   if (streamAutoPlay) advanceStream(1);
