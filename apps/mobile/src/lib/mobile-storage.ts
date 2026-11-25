@@ -1,9 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { CatalogIndexPayload } from '@bhajami/shared';
+import type { CatalogIndexPayload, StreamMediaMode } from '@bhajami/shared';
 
 const LIKED_IDS_KEY = 'bhajami_mobile_liked_ids_v1';
 const CATALOG_INDEX_KEY = 'bhajami_mobile_catalog_index_v1';
 const THEME_MODE_KEY = 'bhajami_mobile_theme_mode_v1';
+const MEDIA_MODE_KEY = 'bhajami_mobile_media_mode_v1';
 
 /** Loads persisted favorite bhajan IDs/slugs from AsyncStorage. */
 export async function loadStoredLikedIds(): Promise<string[]> {
@@ -63,6 +64,25 @@ export async function loadStoredThemeMode(): Promise<'light' | 'dark' | null> {
 export async function saveStoredThemeMode(mode: 'light' | 'dark'): Promise<void> {
   try {
     await AsyncStorage.setItem(THEME_MODE_KEY, mode);
+  } catch {
+    // Non-fatal storage failure
+  }
+}
+
+/** Loads persisted sticky Stream media mode (`audio` Data Saver vs `video`) from AsyncStorage. */
+export async function loadStoredMediaMode(): Promise<StreamMediaMode | null> {
+  try {
+    const raw = await AsyncStorage.getItem(MEDIA_MODE_KEY);
+    return raw === 'audio' || raw === 'video' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Persists sticky Stream media mode (`audio` vs `video`) in AsyncStorage. */
+export async function saveStoredMediaMode(mode: StreamMediaMode): Promise<void> {
+  try {
+    await AsyncStorage.setItem(MEDIA_MODE_KEY, mode);
   } catch {
     // Non-fatal storage failure
   }

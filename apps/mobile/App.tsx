@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   FlatList,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -21,14 +20,20 @@ import {
   computeSimilarBhajans,
   groupRecommendationsByRaga,
   normalizeRagaKey,
+  pickStreamRecording,
   resolveLikedSet,
   transposePitch,
   type Bhajan,
   type BhajanIndexEntry,
   type BhajanRecommendation,
   type CatalogIndexPayload,
+  type StreamMediaMode,
   type StreamModeKind,
 } from '@bhajami/shared';
+import {
+  MobileYouTubePlayer,
+  type MobileYouTubePlayerHandle,
+} from './src/components/MobileYouTubePlayer';
 import {
   DEFAULT_FIREBASE_PROJECT_ID,
   fetchCloudBhajanDetail,
@@ -38,15 +43,16 @@ import {
 import {
   loadCachedCatalogIndex,
   loadStoredLikedIds,
+  loadStoredMediaMode,
   loadStoredThemeMode,
   saveCachedCatalogIndex,
   saveStoredLikedIds,
+  saveStoredMediaMode,
   saveStoredThemeMode,
 } from './src/lib/mobile-storage';
 import {
   filterBhajanIndexEntries,
   formatMetadataSourceBadge,
-  pickPreferredRecording,
   resolvePlaybackAction,
 } from './src/lib/search-and-playback';
 
@@ -140,9 +146,12 @@ export default function App() {
   const [semitoneDelta, setSemitoneDelta] = useState(0);
   const [activeRecIndex, setActiveRecIndex] = useState(0);
 
-  // Stream & Favorites state
+  // Stream, Favorites, & Sticky Audio/Video state
   const [likedIds, setLikedIds] = useState<string[]>([]);
   const [likedRagaFilter, setLikedRagaFilter] = useState('');
+  const [streamSessionActive, setStreamSessionActive] = useState(false);
+  const [streamMediaMode, setStreamMediaMode] = useState<StreamMediaMode>('audio');
+  const [streamAutoPlay, setStreamAutoPlay] = useState(true);
   const [streamMode, setStreamMode] = useState<StreamModeKind>('discovery');
   const [streamDeity, setStreamDeity] = useState<string>('All');
   const [streamRaga, setStreamRaga] = useState<string>('');
@@ -151,12 +160,15 @@ export default function App() {
   const [streamLoadingDetail, setStreamLoadingDetail] = useState(false);
   const [streamDetailFailed, setStreamDetailFailed] = useState(false);
   const [showStreamLyrics, setShowStreamLyrics] = useState(false);
+  const [streamYtPlaying, setStreamYtPlaying] = useState(false);
+  const ytStreamRef = useRef<MobileYouTubePlayerHandle>(null);
 
-  // Direct MP3 playback via expo-av
-  const [isPlaying, setIsPlaying] = useState(false);
+  // Direct MP3 playback via expo-av (shared cleanly with track URI tracking)
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [audioMessage, setAudioMessage] = useState<string | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
+  const loadedAudioUriRef = useRef<string | null>(null);
 
   // Correction modal state
   const [correctionOpen, setCorrectionOpen] = useState(false);
@@ -173,7 +185,8 @@ export default function App() {
       await soundRef.current.unloadAsync().catch(() => {});
       soundRef.current = null;
     }
-    setIsPlaying(false);
+    loadedAudioUriRef.current = null;
+    setIsAudioPlaying(false);
     setAudioMessage(null);
   }, []);
 
@@ -184,6 +197,12 @@ export default function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'stream') {
+      setStreamSessionActive(true);
+    }
+  }, [activeTab]);
 
   const refreshCloudCatalog = useCallback(async () => {
     setSyncingIndex(true);
@@ -204,14 +223,16 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [storedLikes, storedTheme, cachedIndex] = await Promise.all([
+      const [storedLikes, storedTheme, storedMediaMode, cachedIndex] = await Promise.all([
         loadStoredLikedIds(),
         loadStoredThemeMode(),
+        loadStoredMediaMode(),
         loadCachedCatalogIndex(),
       ]);
       if (cancelled) return;
       if (storedLikes.length > 0) setLikedIds(storedLikes);
       if (storedTheme) setThemeMode(storedTheme);
+      if (storedMediaMode) setStreamMediaMode(storedMediaMode);
       if (cachedIndex && cachedIndex.version > 0 && cachedIndex.entries.length > 0) {
         setCatalogIndex(cachedIndex);
         setCatalogSource('cloud');
@@ -379,28 +400,27 @@ export default function App() {
     void loadDetailForId(id, setStudioLoadingDetail, setStudioDetailFailed);
   }, [activeStudioEntry?.id, bhajanCache, loadDetailForId]);
 
-  // Lazy-fetch Stream detail
+  // Lazy-fetch Stream detail whenever Stream is open OR minimized dock is active
   useEffect(() => {
     const id = activeStreamEntry?.id;
-    if (activeTab !== 'stream' || !id || bhajanCache[id]) {
+    if ((activeTab !== 'stream' && !streamSessionActive) || !id || bhajanCache[id]) {
       setStreamLoadingDetail(false);
       setStreamDetailFailed(false);
       return;
     }
     void loadDetailForId(id, setStreamLoadingDetail, setStreamDetailFailed);
-  }, [activeStreamEntry?.id, activeTab, bhajanCache, loadDetailForId]);
+  }, [activeStreamEntry?.id, activeTab, bhajanCache, loadDetailForId, streamSessionActive]);
 
   useEffect(() => {
     setActiveRecIndex(0);
     setSemitoneDelta(0);
     setActiveScriptIdx(0);
-    void unloadAudio();
-  }, [activeStudioEntry?.id, unloadAudio]);
+  }, [activeStudioEntry?.id]);
 
   useEffect(() => {
     setShowStreamLyrics(false);
-    void unloadAudio();
-  }, [activeStreamEntry?.id, unloadAudio]);
+    setStreamYtPlaying(false);
+  }, [activeStreamEntry?.id]);
 
   const handleToggleLike = useCallback((bhajanId: string) => {
     setLikedIds((prev) => {
@@ -420,14 +440,15 @@ export default function App() {
     });
   }, []);
 
-  const openEntryInStudio = useCallback(
-    (bhajanId: string) => {
-      setSelectedId(bhajanId);
-      setActiveTab('studio');
-      void unloadAudio();
-    },
-    [unloadAudio],
-  );
+  const handleMediaModeChange = useCallback((next: StreamMediaMode) => {
+    setStreamMediaMode(next);
+    void saveStoredMediaMode(next);
+  }, []);
+
+  const openEntryInStudio = useCallback((bhajanId: string) => {
+    setSelectedId(bhajanId);
+    setActiveTab('studio');
+  }, []);
 
   const playEntryInStream = useCallback(
     (entry: BhajanIndexEntry) => {
@@ -440,24 +461,34 @@ export default function App() {
         setStreamRaga('');
         setStreamSeed((s) => s + 1);
       }
+      setStreamSessionActive(true);
       setActiveTab('stream');
-      void unloadAudio();
     },
-    [streamQueue, unloadAudio],
+    [streamQueue],
   );
 
   const playAudioUri = useCallback(
-    async (uri: string) => {
-      if (soundRef.current && isPlaying) {
-        await soundRef.current.pauseAsync();
-        setIsPlaying(false);
+    async (
+      uri: string,
+      options: { forceNew?: boolean; onFinish?: () => void } = {},
+    ) => {
+      if (!options.forceNew && loadedAudioUriRef.current === uri && soundRef.current) {
+        if (isAudioPlaying) {
+          await soundRef.current.pauseAsync();
+          setIsAudioPlaying(false);
+        } else {
+          await soundRef.current.playAsync();
+          setIsAudioPlaying(true);
+        }
         return;
       }
-      if (soundRef.current && !isPlaying) {
-        await soundRef.current.playAsync();
-        setIsPlaying(true);
-        return;
+
+      if (soundRef.current) {
+        await soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
       }
+      loadedAudioUriRef.current = uri;
+
       try {
         setIsLoadingAudio(true);
         setAudioMessage(null);
@@ -467,33 +498,26 @@ export default function App() {
           { shouldPlay: true },
           (status: AVPlaybackStatus) => {
             if (status.isLoaded && status.didJustFinish) {
-              setIsPlaying(false);
+              setIsAudioPlaying(false);
+              options.onFinish?.();
             }
           },
         );
         soundRef.current = sound;
-        setIsPlaying(true);
+        setIsAudioPlaying(true);
       } catch (err) {
         setAudioMessage(
           err instanceof Error
             ? `Audio error (${apiBaseUrl}): ${err.message}`
             : 'Unable to play recording.',
         );
-        setIsPlaying(false);
+        setIsAudioPlaying(false);
       } finally {
         setIsLoadingAudio(false);
       }
     },
-    [apiBaseUrl, isPlaying],
+    [apiBaseUrl, isAudioPlaying],
   );
-
-  const openYouTubeUrl = useCallback(async (url: string) => {
-    try {
-      await Linking.openURL(url);
-    } catch {
-      setAudioMessage(`Unable to open YouTube link: ${url}`);
-    }
-  }, []);
 
   const studioBasePitch =
     pitchReference === 'gents' ? activeStudioBhajan?.gentsPitch : activeStudioBhajan?.ladiesPitch;
@@ -511,14 +535,70 @@ export default function App() {
     [apiBaseUrl, studioActiveRecording],
   );
 
-  const streamPreferredRec = useMemo(
-    () => pickPreferredRecording(activeStreamBhajan),
-    [activeStreamBhajan],
+  const {
+    recording: streamPreferredRec,
+    hasAudioOption: streamHasAudioOption,
+    hasVideoOption: streamHasVideoOption,
+  } = useMemo(
+    () => pickStreamRecording(activeStreamBhajan, streamMediaMode),
+    [activeStreamBhajan, streamMediaMode],
   );
   const streamPlayback = useMemo(
     () => resolvePlaybackAction(streamPreferredRec, apiBaseUrl),
     [apiBaseUrl, streamPreferredRec],
   );
+
+  const advanceStream = useCallback(
+    (delta: number) => {
+      setStreamIdx((idx) =>
+        streamQueue.length > 0 ? (idx + delta + streamQueue.length) % streamQueue.length : 0,
+      );
+    },
+    [streamQueue.length],
+  );
+
+  // Auto-play direct audio streams (`expo-av`) when active in Stream / minimized bar
+  const advanceRef = useRef(advanceStream);
+  advanceRef.current = advanceStream;
+  useEffect(() => {
+    if (!streamSessionActive || !activeStreamEntry) {
+      return;
+    }
+    if (streamPlayback.kind === 'audio') {
+      if (loadedAudioUriRef.current !== streamPlayback.uri && streamAutoPlay) {
+        void playAudioUri(streamPlayback.uri, {
+          forceNew: true,
+          onFinish: () => {
+            if (streamAutoPlay) advanceRef.current(1);
+          },
+        });
+      }
+    } else if (loadedAudioUriRef.current) {
+      // Track switched from MP3 to YouTube -> unload old expo-av audio cleanly
+      void unloadAudio();
+    }
+  }, [
+    activeStreamEntry,
+    playAudioUri,
+    streamAutoPlay,
+    streamPlayback,
+    streamSessionActive,
+    unloadAudio,
+  ]);
+
+  const handleToggleStreamPlayPause = useCallback(() => {
+    if (streamPlayback.kind === 'youtube') {
+      ytStreamRef.current?.togglePlay();
+    } else if (streamPlayback.kind === 'audio') {
+      void playAudioUri(streamPlayback.uri);
+    }
+  }, [playAudioUri, streamPlayback]);
+
+  const handleDismissStream = useCallback(() => {
+    setStreamSessionActive(false);
+    setStreamYtPlaying(false);
+    void unloadAudio();
+  }, [unloadAudio]);
 
   function openCorrectionModal() {
     setProposedLyricsText((studioLyricsSet?.lines ?? []).join('\n'));
@@ -644,6 +724,12 @@ export default function App() {
     );
   }
 
+  const streamIsMinimized = activeTab !== 'stream';
+  const showPersistentStream = streamSessionActive && Boolean(activeStreamEntry);
+  const effectiveStreamPlaying =
+    streamPlayback.kind === 'youtube' ? streamYtPlaying : isAudioPlaying;
+  const activeStreamLiked = activeStreamEntry ? likedSet.has(activeStreamEntry.id) : false;
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.bg }]}>
       <StatusBar style={theme.mode === 'dark' ? 'light' : 'dark'} />
@@ -688,220 +774,213 @@ export default function App() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.container}>
-        {/* HOME TAB */}
-        {activeTab === 'home' && (
-          <View style={styles.sectionStack}>
-            <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-              <Text style={[styles.heroTitle, { color: theme.text }]}>
-                Your Sathya Sai Bhajans Companion
-              </Text>
-              <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                Shuffle across verified &amp; YouTube bhajans, curate favorites with ♥, and jump into
-                multi-script Jam Studio.
-              </Text>
+      {/* Main Content + Single Persistent Stream Player Slot (reordered visually on Stream tab without unmounting!) */}
+      <View
+        style={{
+          flex: 1,
+          flexDirection: activeTab === 'stream' ? 'column-reverse' : 'column',
+        }}
+      >
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.container}>
+          {/* HOME TAB */}
+          {activeTab === 'home' && (
+            <View style={styles.sectionStack}>
+              <View
+                style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}
+              >
+                <Text style={[styles.heroTitle, { color: theme.text }]}>
+                  Your Sathya Sai Bhajans Companion
+                </Text>
+                <Text style={[styles.metaLine, { color: theme.textMuted }]}>
+                  Listen continuously in Data Saver Audio or Video mode, curate favorites with ♥, and
+                  explore multi-script Studio sheets.
+                </Text>
 
-              <View style={styles.heroActions}>
-                <Pressable
-                  onPress={() => {
-                    setStreamMode('discovery');
-                    setStreamSeed((s) => s + 1);
-                    setActiveTab('stream');
-                  }}
-                  style={[styles.playBtn, { backgroundColor: theme.accent }]}
-                >
-                  <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                    ▶ Start Random Stream
-                  </Text>
-                </Pressable>
-
-                {canShowForYou && (
+                <View style={styles.heroActions}>
                   <Pressable
                     onPress={() => {
-                      setStreamMode('for_you');
-                      setStreamSeed((s) => s + 1);
-                      setActiveTab('stream');
-                    }}
-                    style={[styles.playBtn, { backgroundColor: theme.badgeSuccessText }]}
-                  >
-                    <Text style={[styles.playBtnText, { color: '#FFFFFF' }]}>✨ For You</Text>
-                  </Pressable>
-                )}
-
-                <Pressable
-                  onPress={() => setActiveTab('studio')}
-                  style={[
-                    styles.secondaryBtn,
-                    { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                  ]}
-                >
-                  <Text style={[styles.secondaryBtnText, { color: theme.text }]}>Open Studio</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setActiveTab('liked')}
-                  style={[
-                    styles.secondaryBtn,
-                    { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                  ]}
-                >
-                  <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
-                    ♥ Liked ({likedEntries.length})
-                  </Text>
-                </Pressable>
-              </View>
-
-              <TextInput
-                value={homeQuery}
-                onChangeText={setHomeQuery}
-                placeholder="Phonetic quick search: Vittala, Narayana, Bowli..."
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.searchInput,
-                  { backgroundColor: theme.bg, borderColor: theme.border, color: theme.text },
-                ]}
-              />
-
-              {homeSearchResults.length > 0 && (
-                <View style={styles.sectionStack}>
-                  {homeSearchResults.map((entry) => {
-                    const liked = likedSet.has(entry.id);
-                    return (
-                      <View
-                        key={entry.id}
-                        style={[
-                          styles.recCard,
-                          { backgroundColor: theme.bg, borderColor: theme.border },
-                        ]}
-                      >
-                        <Text style={[styles.listTitle, { color: theme.text }]}>{entry.title}</Text>
-                        <Text style={[styles.listMeta, { color: theme.textMuted }]}>
-                          {[entry.deity, entry.ragaName, `${entry.recordingCount} audio`]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </Text>
-                        <View style={styles.recActionsRow}>
-                          <Pressable
-                            onPress={() => playEntryInStream(entry)}
-                            style={[styles.smallBtn, { backgroundColor: theme.accent }]}
-                          >
-                            <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                              Stream
-                            </Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => handleToggleLike(entry.id)}
-                            style={[
-                              styles.smallBtn,
-                              {
-                                borderWidth: 1,
-                                borderColor: theme.border,
-                                backgroundColor: theme.surfaceRaised,
-                              },
-                            ]}
-                          >
-                            <Text style={[styles.smallBtnText, { color: theme.text }]}>
-                              {liked ? '♥ Liked' : '♡ Like'}
-                            </Text>
-                          </Pressable>
-                          <Pressable
-                            onPress={() => openEntryInStudio(entry.id)}
-                            style={[
-                              styles.smallBtn,
-                              {
-                                borderWidth: 1,
-                                borderColor: theme.border,
-                                backgroundColor: theme.surfaceRaised,
-                              },
-                            ]}
-                          >
-                            <Text style={[styles.smallBtnText, { color: theme.text }]}>
-                              Studio
-                            </Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-
-            {ragaShelves.map((shelf) => (
-              <View key={shelf.ragaName} style={styles.sectionStack}>
-                <View style={styles.sectionHeaderRow}>
-                  <Text style={[styles.sectionHeading, { color: theme.text }]}>
-                    Because You Liked Raga {shelf.ragaName}
-                  </Text>
-                  <Pressable
-                    onPress={() => {
-                      setStreamRaga(shelf.ragaName);
-                      setStreamDeity('All');
                       setStreamMode('discovery');
                       setStreamSeed((s) => s + 1);
+                      setStreamSessionActive(true);
                       setActiveTab('stream');
                     }}
+                    style={[styles.playBtn, { backgroundColor: theme.accent }]}
+                  >
+                    <Text style={[styles.playBtnText, { color: theme.accentText }]}>
+                      ▶ Start Random Stream
+                    </Text>
+                  </Pressable>
+
+                  {canShowForYou && (
+                    <Pressable
+                      onPress={() => {
+                        setStreamMode('for_you');
+                        setStreamSeed((s) => s + 1);
+                        setStreamSessionActive(true);
+                        setActiveTab('stream');
+                      }}
+                      style={[styles.playBtn, { backgroundColor: theme.badgeSuccessText }]}
+                    >
+                      <Text style={[styles.playBtnText, { color: '#FFFFFF' }]}>✨ For You</Text>
+                    </Pressable>
+                  )}
+
+                  <Pressable
+                    onPress={() => setActiveTab('studio')}
                     style={[
-                      styles.smallBtn,
-                      {
-                        borderWidth: 1,
-                        borderColor: theme.border,
-                        backgroundColor: theme.surface,
-                      },
+                      styles.secondaryBtn,
+                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
                     ]}
                   >
-                    <Text style={[styles.smallBtnText, { color: theme.text }]}>Stream Raga</Text>
+                    <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
+                      Open Studio
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setActiveTab('liked')}
+                    style={[
+                      styles.secondaryBtn,
+                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                    ]}
+                  >
+                    <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
+                      ♥ Liked ({likedEntries.length})
+                    </Text>
                   </Pressable>
                 </View>
-                {shelf.items.slice(0, 4).map(renderRecommendationCard)}
-              </View>
-            ))}
 
-            <View style={styles.sectionStack}>
-              <Text style={[styles.sectionHeading, { color: theme.text }]}>
-                {likedEntries.length > 0
-                  ? 'Recommended Based on Your Likes'
-                  : 'Featured Verified Bhajans'}
-              </Text>
-              {similarRecs.slice(0, 6).map(renderRecommendationCard)}
-            </View>
-          </View>
-        )}
-
-        {/* STREAM TAB */}
-        {activeTab === 'stream' && (
-          <View style={styles.sectionStack}>
-            <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-              <Text style={[styles.heroTitle, { color: theme.text }]}>Continuous Bhajan Stream</Text>
-              <View style={styles.heroActions}>
-                <Pressable
-                  onPress={() => setStreamMode('discovery')}
+                <TextInput
+                  value={homeQuery}
+                  onChangeText={setHomeQuery}
+                  placeholder="Phonetic quick search: Vittala, Narayana, Bowli..."
+                  placeholderTextColor={theme.textMuted}
                   style={[
-                    styles.smallBtn,
-                    {
-                      backgroundColor:
-                        streamMode === 'discovery' ? theme.accent : theme.surfaceRaised,
-                      borderWidth: 1,
-                      borderColor: theme.border,
-                    },
+                    styles.searchInput,
+                    { backgroundColor: theme.bg, borderColor: theme.border, color: theme.text },
                   ]}
-                >
-                  <Text
-                    style={[
-                      styles.smallBtnText,
-                      { color: streamMode === 'discovery' ? theme.accentText : theme.text },
-                    ]}
-                  >
-                    Random Stream
-                  </Text>
-                </Pressable>
-                {canShowForYou && (
+                />
+
+                {homeSearchResults.length > 0 && (
+                  <View style={styles.sectionStack}>
+                    {homeSearchResults.map((entry) => {
+                      const liked = likedSet.has(entry.id);
+                      return (
+                        <View
+                          key={entry.id}
+                          style={[
+                            styles.recCard,
+                            { backgroundColor: theme.bg, borderColor: theme.border },
+                          ]}
+                        >
+                          <Text style={[styles.listTitle, { color: theme.text }]}>{entry.title}</Text>
+                          <Text style={[styles.listMeta, { color: theme.textMuted }]}>
+                            {[entry.deity, entry.ragaName, `${entry.recordingCount} audio`]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </Text>
+                          <View style={styles.recActionsRow}>
+                            <Pressable
+                              onPress={() => playEntryInStream(entry)}
+                              style={[styles.smallBtn, { backgroundColor: theme.accent }]}
+                            >
+                              <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
+                                Stream
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => handleToggleLike(entry.id)}
+                              style={[
+                                styles.smallBtn,
+                                {
+                                  borderWidth: 1,
+                                  borderColor: theme.border,
+                                  backgroundColor: theme.surfaceRaised,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.smallBtnText, { color: theme.text }]}>
+                                {liked ? '♥ Liked' : '♡ Like'}
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => openEntryInStudio(entry.id)}
+                              style={[
+                                styles.smallBtn,
+                                {
+                                  borderWidth: 1,
+                                  borderColor: theme.border,
+                                  backgroundColor: theme.surfaceRaised,
+                                },
+                              ]}
+                            >
+                              <Text style={[styles.smallBtnText, { color: theme.text }]}>
+                                Studio
+                              </Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+
+              {ragaShelves.map((shelf) => (
+                <View key={shelf.ragaName} style={styles.sectionStack}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={[styles.sectionHeading, { color: theme.text }]}>
+                      Because You Liked Raga {shelf.ragaName}
+                    </Text>
+                    <Pressable
+                      onPress={() => {
+                        setStreamRaga(shelf.ragaName);
+                        setStreamDeity('All');
+                        setStreamMode('discovery');
+                        setStreamSeed((s) => s + 1);
+                        setStreamSessionActive(true);
+                        setActiveTab('stream');
+                      }}
+                      style={[
+                        styles.smallBtn,
+                        {
+                          borderWidth: 1,
+                          borderColor: theme.border,
+                          backgroundColor: theme.surface,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.smallBtnText, { color: theme.text }]}>Stream Raga</Text>
+                    </Pressable>
+                  </View>
+                  {shelf.items.slice(0, 4).map(renderRecommendationCard)}
+                </View>
+              ))}
+
+              <View style={styles.sectionStack}>
+                <Text style={[styles.sectionHeading, { color: theme.text }]}>
+                  {likedEntries.length > 0
+                    ? 'Recommended Based on Your Likes'
+                    : 'Featured Verified Bhajans'}
+                </Text>
+                {similarRecs.slice(0, 6).map(renderRecommendationCard)}
+              </View>
+            </View>
+          )}
+
+          {/* STREAM CONTROLS + LYRICS + UP NEXT (scrolled below the persistent active Stream Player) */}
+          {activeTab === 'stream' && (
+            <View style={styles.sectionStack}>
+              <View
+                style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}
+              >
+                <View style={styles.heroActions}>
                   <Pressable
-                    onPress={() => setStreamMode('for_you')}
+                    onPress={() => setStreamMode('discovery')}
                     style={[
                       styles.smallBtn,
                       {
                         backgroundColor:
-                          streamMode === 'for_you' ? theme.accent : theme.surfaceRaised,
+                          streamMode === 'discovery' ? theme.accent : theme.surfaceRaised,
                         borderWidth: 1,
                         borderColor: theme.border,
                       },
@@ -910,173 +989,287 @@ export default function App() {
                     <Text
                       style={[
                         styles.smallBtnText,
-                        { color: streamMode === 'for_you' ? theme.accentText : theme.text },
+                        { color: streamMode === 'discovery' ? theme.accentText : theme.text },
                       ]}
                     >
-                      For You
+                      Random Stream
                     </Text>
                   </Pressable>
-                )}
-                <Pressable
-                  onPress={() => setStreamMode('liked_only')}
-                  style={[
-                    styles.smallBtn,
-                    {
-                      backgroundColor:
-                        streamMode === 'liked_only' ? theme.accent : theme.surfaceRaised,
-                      borderWidth: 1,
-                      borderColor: theme.border,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.smallBtnText,
-                      { color: streamMode === 'liked_only' ? theme.accentText : theme.text },
-                    ]}
-                  >
-                    Liked Radio ({likedSet.size})
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setStreamSeed((s) => s + 1)}
-                  style={[
-                    styles.smallBtn,
-                    { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
-                  ]}
-                >
-                  <Text style={[styles.smallBtnText, { color: theme.text }]}>Reshuffle</Text>
-                </Pressable>
-              </View>
-
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow}>
-                {deities.map((deity) => (
+                  {canShowForYou && (
+                    <Pressable
+                      onPress={() => setStreamMode('for_you')}
+                      style={[
+                        styles.smallBtn,
+                        {
+                          backgroundColor:
+                            streamMode === 'for_you' ? theme.accent : theme.surfaceRaised,
+                          borderWidth: 1,
+                          borderColor: theme.border,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.smallBtnText,
+                          { color: streamMode === 'for_you' ? theme.accentText : theme.text },
+                        ]}
+                      >
+                        For You
+                      </Text>
+                    </Pressable>
+                  )}
                   <Pressable
-                    key={deity}
-                    onPress={() => setStreamDeity(deity)}
+                    onPress={() => setStreamMode('liked_only')}
                     style={[
-                      styles.chip,
-                      { backgroundColor: streamDeity === deity ? theme.accent : theme.chipBg },
+                      styles.smallBtn,
+                      {
+                        backgroundColor:
+                          streamMode === 'liked_only' ? theme.accent : theme.surfaceRaised,
+                        borderWidth: 1,
+                        borderColor: theme.border,
+                      },
                     ]}
                   >
                     <Text
-                      style={{
-                        color: streamDeity === deity ? theme.accentText : theme.text,
-                        fontSize: 12,
-                        fontWeight: '600',
-                      }}
+                      style={[
+                        styles.smallBtnText,
+                        { color: streamMode === 'liked_only' ? theme.accentText : theme.text },
+                      ]}
                     >
-                      {deity}
+                      Liked Radio ({likedSet.size})
                     </Text>
                   </Pressable>
-                ))}
-              </ScrollView>
+                  <Pressable
+                    onPress={() =>
+                      handleMediaModeChange(streamMediaMode === 'audio' ? 'video' : 'audio')
+                    }
+                    style={[
+                      styles.smallBtn,
+                      {
+                        backgroundColor:
+                          streamMediaMode === 'audio'
+                            ? theme.badgeSuccessBg
+                            : theme.surfaceRaised,
+                        borderWidth: 1,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.smallBtnText,
+                        {
+                          color:
+                            streamMediaMode === 'audio' ? theme.badgeSuccessText : theme.text,
+                        },
+                      ]}
+                    >
+                      Mode: {streamMediaMode === 'audio' ? 'Audio Saver' : 'Video'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setStreamAutoPlay((v) => !v)}
+                    style={[
+                      styles.smallBtn,
+                      {
+                        backgroundColor: streamAutoPlay ? theme.accent : theme.surfaceRaised,
+                        borderWidth: 1,
+                        borderColor: theme.border,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.smallBtnText,
+                        { color: streamAutoPlay ? theme.accentText : theme.text },
+                      ]}
+                    >
+                      {streamAutoPlay ? 'Auto: ON' : 'Auto: OFF'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => setStreamSeed((s) => s + 1)}
+                    style={[
+                      styles.smallBtn,
+                      { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
+                    ]}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.text }]}>Reshuffle</Text>
+                  </Pressable>
+                </View>
 
-              {availableRagas.length > 0 && (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   style={styles.chipsRow}
                 >
-                  <Pressable
-                    onPress={() => setStreamRaga('')}
-                    style={[
-                      styles.chip,
-                      { backgroundColor: streamRaga === '' ? theme.accent : theme.chipBg },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: streamRaga === '' ? theme.accentText : theme.text,
-                        fontSize: 12,
-                        fontWeight: '600',
-                      }}
-                    >
-                      All Ragas
-                    </Text>
-                  </Pressable>
-                  {availableRagas.slice(0, 15).map((raga) => (
+                  {deities.map((deity) => (
                     <Pressable
-                      key={raga}
-                      onPress={() => setStreamRaga(raga)}
+                      key={deity}
+                      onPress={() => setStreamDeity(deity)}
                       style={[
                         styles.chip,
-                        { backgroundColor: streamRaga === raga ? theme.accent : theme.chipBg },
+                        { backgroundColor: streamDeity === deity ? theme.accent : theme.chipBg },
                       ]}
                     >
                       <Text
                         style={{
-                          color: streamRaga === raga ? theme.accentText : theme.text,
+                          color: streamDeity === deity ? theme.accentText : theme.text,
                           fontSize: 12,
                           fontWeight: '600',
                         }}
                       >
-                        {raga}
+                        {deity}
                       </Text>
                     </Pressable>
                   ))}
                 </ScrollView>
-              )}
 
-              {activeStreamEntry ? (
-                <View
-                  style={[
-                    styles.pitchBox,
-                    { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
-                  ]}
-                >
-                  <View style={styles.chipWrap}>
-                    <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
-                      <Text style={[styles.badgeText, { color: theme.text }]}>
-                        Track {safeStreamIdx + 1} of {streamQueue.length}
-                      </Text>
-                    </View>
-                    {activeStreamEntry.deity ? (
-                      <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
-                        <Text style={[styles.badgeText, { color: theme.text }]}>
-                          {activeStreamEntry.deity}
-                        </Text>
-                      </View>
-                    ) : null}
-                    {activeStreamEntry.ragaName ? (
-                      <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
-                        <Text style={[styles.badgeText, { color: theme.text }]}>
-                          Raga: {activeStreamEntry.ragaName}
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-
-                  <Text style={[styles.bhajanTitle, { color: theme.text }]}>
-                    {activeStreamEntry.title}
-                  </Text>
-
-                  <View style={styles.recActionsRow}>
+                {availableRagas.length > 0 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.chipsRow}
+                  >
                     <Pressable
-                      onPress={() =>
-                        setStreamIdx((idx) =>
-                          streamQueue.length > 0
-                            ? (idx - 1 + streamQueue.length) % streamQueue.length
-                            : 0,
-                        )
-                      }
+                      onPress={() => setStreamRaga('')}
                       style={[
-                        styles.smallBtn,
-                        { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
+                        styles.chip,
+                        { backgroundColor: streamRaga === '' ? theme.accent : theme.chipBg },
                       ]}
                     >
-                      <Text style={[styles.smallBtnText, { color: theme.text }]}>◀ Prev</Text>
+                      <Text
+                        style={{
+                          color: streamRaga === '' ? theme.accentText : theme.text,
+                          fontSize: 12,
+                          fontWeight: '600',
+                        }}
+                      >
+                        All Ragas
+                      </Text>
                     </Pressable>
+                    {availableRagas.slice(0, 15).map((raga) => (
+                      <Pressable
+                        key={raga}
+                        onPress={() => setStreamRaga(raga)}
+                        style={[
+                          styles.chip,
+                          { backgroundColor: streamRaga === raga ? theme.accent : theme.chipBg },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: streamRaga === raga ? theme.accentText : theme.text,
+                            fontSize: 12,
+                            fontWeight: '600',
+                          }}
+                        >
+                          {raga}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
+
+                {activeStreamBhajan?.lyricsSets?.[0]?.lines?.length ? (
+                  <View>
+                    <Pressable onPress={() => setShowStreamLyrics((v) => !v)}>
+                      <Text
+                        style={[styles.smallBtnText, { color: theme.accent, paddingVertical: 4 }]}
+                      >
+                        {showStreamLyrics ? '▼ Hide Lyrics' : '▶ Show Lyrics'} (
+                        {activeStreamBhajan.lyricsSets[0].language})
+                      </Text>
+                    </Pressable>
+                    {showStreamLyrics && (
+                      <View style={styles.lyricsBox}>
+                        {activeStreamBhajan.lyricsSets[0].lines.map((line, i) => (
+                          <Text
+                            key={`${activeStreamBhajan.id}-sl-${i}`}
+                            style={[styles.lyricLine, { color: theme.text }]}
+                          >
+                            {line}
+                          </Text>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                ) : null}
+
+                {!activeStreamEntry && (
+                  <Text style={[styles.metaLine, { color: theme.textMuted }]}>
+                    {streamMode === 'liked_only'
+                      ? 'Tap ♥ Like on any bhajan first to listen to your Liked Radio.'
+                      : 'No playable bhajans match your current Deity/Raga filters.'}
+                  </Text>
+                )}
+              </View>
+
+              {streamQueue.length > 1 && (
+                <View style={styles.sectionStack}>
+                  <Text style={[styles.sectionHeading, { color: theme.text }]}>
+                    Up Next in Stream
+                  </Text>
+                  {streamQueue
+                    .slice(safeStreamIdx + 1, safeStreamIdx + 7)
+                    .map((item, offset) => (
+                      <Pressable
+                        key={`${item.id}-${offset}`}
+                        onPress={() => setStreamIdx(safeStreamIdx + 1 + offset)}
+                        style={[
+                          styles.listRow,
+                          { backgroundColor: theme.surface, borderColor: theme.border },
+                        ]}
+                      >
+                        <Text style={[styles.listTitle, { color: theme.text }]}>{item.title}</Text>
+                        <Text style={[styles.listMeta, { color: theme.textMuted }]}>
+                          {[item.deity, item.ragaName].filter(Boolean).join(' · ') || 'Audio Linked'}
+                        </Text>
+                      </Pressable>
+                    ))}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* STUDIO TAB */}
+          {activeTab === 'studio' && (
+            <View style={styles.sectionStack}>
+              {activeStudioEntry && (
+                <View
+                  style={[
+                    styles.card,
+                    { backgroundColor: theme.surface, borderColor: theme.border },
+                  ]}
+                >
+                  <View style={styles.cardTopRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.bhajanTitle, { color: theme.text }]}>
+                        {activeStudioBhajan?.title || activeStudioEntry.title}
+                      </Text>
+                      <Text style={[styles.metaLine, { color: theme.textMuted }]}>
+                        {[
+                          activeStudioBhajan?.deity ?? activeStudioEntry.deity ?? 'Devotional',
+                          activeStudioBhajan?.raga?.name ??
+                            activeStudioEntry.ragaName ??
+                            'Raga Unspecified',
+                          activeStudioBhajan?.beat ?? activeStudioEntry.beat,
+                          activeStudioBhajan?.tempo,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                    </View>
                     <Pressable
-                      onPress={() => handleToggleLike(activeStreamEntry.id)}
+                      onPress={() => handleToggleLike(activeStudioEntry.id)}
                       style={[
                         styles.smallBtn,
                         {
                           borderWidth: 1,
-                          borderColor: likedSet.has(activeStreamEntry.id)
+                          borderColor: likedSet.has(activeStudioEntry.id)
                             ? theme.accent
                             : theme.border,
-                          backgroundColor: theme.bg,
+                          backgroundColor: theme.surfaceRaised,
                         },
                       ]}
                     >
@@ -1084,58 +1277,71 @@ export default function App() {
                         style={[
                           styles.smallBtnText,
                           {
-                            color: likedSet.has(activeStreamEntry.id)
-                              ? theme.accent
-                              : theme.text,
+                            color: likedSet.has(activeStudioEntry.id) ? theme.accent : theme.text,
                           },
                         ]}
                       >
-                        {likedSet.has(activeStreamEntry.id) ? '♥ Liked' : '♡ Like'}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() =>
-                        setStreamIdx((idx) =>
-                          streamQueue.length > 0 ? (idx + 1) % streamQueue.length : 0,
-                        )
-                      }
-                      style={[styles.smallBtn, { backgroundColor: theme.accent }]}
-                    >
-                      <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                        Next ▶
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => openEntryInStudio(activeStreamEntry.id)}
-                      style={[
-                        styles.smallBtn,
-                        { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
-                      ]}
-                    >
-                      <Text style={[styles.smallBtnText, { color: theme.text }]}>
-                        Open in Studio
+                        {likedSet.has(activeStudioEntry.id) ? '♥' : '♡'}
                       </Text>
                     </Pressable>
                   </View>
 
-                  {streamLoadingDetail && !activeStreamBhajan ? (
+                  <View style={styles.chipWrap}>
+                    {(() => {
+                      const srcBadge = formatMetadataSourceBadge(
+                        activeStudioBhajan?.metadataSource ?? activeStudioEntry.metadataSource,
+                      );
+                      return (
+                        <View
+                          style={[
+                            styles.badge,
+                            {
+                              backgroundColor: srcBadge.verified
+                                ? theme.badgeSuccessBg
+                                : theme.chipBg,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.badgeText,
+                              {
+                                color: srcBadge.verified ? theme.badgeSuccessText : theme.text,
+                              },
+                            ]}
+                          >
+                            {srcBadge.label}
+                          </Text>
+                        </View>
+                      );
+                    })()}
+                    {activeStudioEntry.missingFields.length > 0 && (
+                      <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                        <Text style={[styles.badgeText, { color: theme.textMuted }]}>
+                          Needs {activeStudioEntry.missingFields.length} fields
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {studioLoadingDetail && !activeStudioBhajan ? (
                     <View style={styles.inlineRow}>
                       <ActivityIndicator color={theme.accent} />
                       <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                        Loading stream audio and lyrics…
+                        Loading cloud details…
                       </Text>
                     </View>
-                  ) : streamDetailFailed && !activeStreamBhajan ? (
+                  ) : studioDetailFailed && !activeStudioBhajan ? (
                     <View style={styles.inlineRow}>
                       <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                        Could not load details right now.
+                        Unable to fetch full detail.
                       </Text>
                       <Pressable
                         onPress={() =>
                           void loadDetailForId(
-                            activeStreamEntry.id,
-                            setStreamLoadingDetail,
-                            setStreamDetailFailed,
+                            activeStudioEntry.id,
+                            setStudioLoadingDetail,
+                            setStudioDetailFailed,
                           )
                         }
                         style={[
@@ -1146,721 +1352,763 @@ export default function App() {
                         <Text style={[styles.smallBtnText, { color: theme.text }]}>Retry</Text>
                       </Pressable>
                     </View>
-                  ) : streamPlayback.kind === 'youtube' ? (
-                    <View style={styles.sectionStack}>
-                      <Pressable
-                        onPress={() => void openYouTubeUrl(streamPlayback.url)}
-                        style={[styles.playBtn, { backgroundColor: theme.youtubeBg }]}
-                      >
-                        <Text style={[styles.playBtnText, { color: theme.youtubeText }]}>
-                          ▶ Watch / Play on YouTube
-                          {streamPlayback.chapterLabel ? ` (${streamPlayback.chapterLabel})` : ''}
-                        </Text>
-                      </Pressable>
-                      <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                        Opens natively in the YouTube app / browser at the exact bhajan timestamp.
-                      </Text>
-                    </View>
-                  ) : streamPlayback.kind === 'audio' ? (
-                    <Pressable
-                      onPress={() => void playAudioUri(streamPlayback.uri)}
-                      style={[styles.playBtn, { backgroundColor: theme.accent }]}
-                    >
-                      {isLoadingAudio ? (
-                        <ActivityIndicator color={theme.accentText} />
-                      ) : (
-                        <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                          {isPlaying ? 'Pause Stream Track' : '▶ Play Stream Track'}
-                        </Text>
-                      )}
-                    </Pressable>
-                  ) : (
-                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                      {streamPlayback.reason}
-                    </Text>
-                  )}
-
-                  {activeStreamBhajan?.lyricsSets?.[0]?.lines?.length ? (
-                    <View>
-                      <Pressable onPress={() => setShowStreamLyrics((v) => !v)}>
-                        <Text
-                          style={[
-                            styles.smallBtnText,
-                            { color: theme.accent, paddingVertical: 4 },
-                          ]}
-                        >
-                          {showStreamLyrics ? '▼ Hide Lyrics' : '▶ Show Lyrics'} (
-                          {activeStreamBhajan.lyricsSets[0].language})
-                        </Text>
-                      </Pressable>
-                      {showStreamLyrics && (
-                        <View style={styles.lyricsBox}>
-                          {activeStreamBhajan.lyricsSets[0].lines.map((line, i) => (
-                            <Text
-                              key={`${activeStreamBhajan.id}-sl-${i}`}
-                              style={[styles.lyricLine, { color: theme.text }]}
-                            >
-                              {line}
-                            </Text>
-                          ))}
-                        </View>
-                      )}
-                    </View>
                   ) : null}
-                </View>
-              ) : (
-                <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                  {streamMode === 'liked_only'
-                    ? 'Tap ♥ Like on any bhajan first to listen to your Liked Radio.'
-                    : 'No playable bhajans match your current Deity/Raga filters.'}
-                </Text>
-              )}
-            </View>
 
-            {streamQueue.length > 1 && (
-              <View style={styles.sectionStack}>
-                <Text style={[styles.sectionHeading, { color: theme.text }]}>
-                  Up Next in Stream
-                </Text>
-                {streamQueue
-                  .slice(safeStreamIdx + 1, safeStreamIdx + 7)
-                  .map((item, offset) => (
-                    <Pressable
-                      key={`${item.id}-${offset}`}
-                      onPress={() => setStreamIdx(safeStreamIdx + 1 + offset)}
-                      style={[
-                        styles.listRow,
-                        { backgroundColor: theme.surface, borderColor: theme.border },
-                      ]}
-                    >
-                      <Text style={[styles.listTitle, { color: theme.text }]}>{item.title}</Text>
-                      <Text style={[styles.listMeta, { color: theme.textMuted }]}>
-                        {[item.deity, item.ragaName].filter(Boolean).join(' · ') || 'Audio Linked'}
-                      </Text>
-                    </Pressable>
-                  ))}
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* STUDIO TAB (Active Stage rendered first so "Open in Studio" lands directly on it!) */}
-        {activeTab === 'studio' && (
-          <View style={styles.sectionStack}>
-            {activeStudioEntry && (
-              <View
-                style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}
-              >
-                <View style={styles.cardTopRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.bhajanTitle, { color: theme.text }]}>
-                      {activeStudioBhajan?.title || activeStudioEntry.title}
-                    </Text>
-                    <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                      {[
-                        activeStudioBhajan?.deity ?? activeStudioEntry.deity ?? 'Devotional',
-                        activeStudioBhajan?.raga?.name ??
-                          activeStudioEntry.ragaName ??
-                          'Raga Unspecified',
-                        activeStudioBhajan?.beat ?? activeStudioEntry.beat,
-                        activeStudioBhajan?.tempo,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={() => handleToggleLike(activeStudioEntry.id)}
-                    style={[
-                      styles.smallBtn,
-                      {
-                        borderWidth: 1,
-                        borderColor: likedSet.has(activeStudioEntry.id)
-                          ? theme.accent
-                          : theme.border,
-                        backgroundColor: theme.surfaceRaised,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.smallBtnText,
-                        {
-                          color: likedSet.has(activeStudioEntry.id) ? theme.accent : theme.text,
-                        },
-                      ]}
-                    >
-                      {likedSet.has(activeStudioEntry.id) ? '♥' : '♡'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                <View style={styles.chipWrap}>
-                  {(() => {
-                    const srcBadge = formatMetadataSourceBadge(
-                      activeStudioBhajan?.metadataSource ?? activeStudioEntry.metadataSource,
-                    );
-                    return (
-                      <View
-                        style={[
-                          styles.badge,
-                          {
-                            backgroundColor: srcBadge.verified
-                              ? theme.badgeSuccessBg
-                              : theme.chipBg,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.badgeText,
-                            {
-                              color: srcBadge.verified ? theme.badgeSuccessText : theme.text,
-                            },
-                          ]}
-                        >
-                          {srcBadge.label}
-                        </Text>
-                      </View>
-                    );
-                  })()}
-                  {activeStudioEntry.missingFields.length > 0 && (
-                    <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
-                      <Text style={[styles.badgeText, { color: theme.textMuted }]}>
-                        Needs {activeStudioEntry.missingFields.length} fields
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {studioLoadingDetail && !activeStudioBhajan ? (
-                  <View style={styles.inlineRow}>
-                    <ActivityIndicator color={theme.accent} />
-                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                      Loading cloud details…
-                    </Text>
-                  </View>
-                ) : studioDetailFailed && !activeStudioBhajan ? (
-                  <View style={styles.inlineRow}>
-                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                      Unable to fetch full detail.
-                    </Text>
-                    <Pressable
-                      onPress={() =>
-                        void loadDetailForId(
-                          activeStudioEntry.id,
-                          setStudioLoadingDetail,
-                          setStudioDetailFailed,
-                        )
-                      }
-                      style={[
-                        styles.smallBtn,
-                        { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
-                      ]}
-                    >
-                      <Text style={[styles.smallBtnText, { color: theme.text }]}>Retry</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-
-                {/* Nullable-safe Pitch Transposer */}
-                <View
-                  style={[
-                    styles.pitchBox,
-                    { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
-                  ]}
-                >
-                  <View style={styles.pitchHeaderRow}>
-                    <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>
-                      KEY &amp; SHRUTI TRANSPOSER
-                    </Text>
-                    <View style={styles.refSwitch}>
-                      {(['gents', 'ladies'] as const).map((refKey) => {
-                        const active = pitchReference === refKey;
-                        return (
-                          <Pressable
-                            key={refKey}
-                            onPress={() => setPitchReference(refKey)}
-                            style={[
-                              styles.refPill,
-                              { backgroundColor: active ? theme.accent : theme.chipBg },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.refPillText,
-                                { color: active ? theme.accentText : theme.text },
-                              ]}
-                            >
-                              {refKey === 'gents' ? 'Gents' : 'Ladies'}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </View>
-
-                  <View style={styles.transposeControls}>
-                    <Pressable
-                      onPress={() => setSemitoneDelta((d) => Math.max(-6, d - 1))}
-                      style={[
-                        styles.stepBtn,
-                        { borderColor: theme.border, backgroundColor: theme.surface },
-                      ]}
-                    >
-                      <Text style={[styles.stepBtnText, { color: theme.text }]}>−1 st</Text>
-                    </Pressable>
-                    <View style={styles.pitchReadout}>
-                      <Text style={[styles.pitchValue, { color: theme.text }]}>
-                        {studioTransposed.pancham} ({studioTransposed.western})
-                      </Text>
-                      <Text style={[styles.pitchSub, { color: theme.textMuted }]}>
-                        {studioTransposed.freqHz.toFixed(1)} Hz · {studioTransposed.deltaLabel}
-                        {!studioBasePitch ? ' · Default ref (D)' : ''}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => setSemitoneDelta((d) => Math.min(6, d + 1))}
-                      style={[
-                        styles.stepBtn,
-                        { borderColor: theme.border, backgroundColor: theme.surface },
-                      ]}
-                    >
-                      <Text style={[styles.stepBtnText, { color: theme.text }]}>+1 st</Text>
-                    </Pressable>
-                  </View>
-                </View>
-
-                {/* Recording Vault */}
-                {activeStudioBhajan?.recordings.length ? (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.chipsRow}
-                  >
-                    {activeStudioBhajan.recordings.map((rec, idx) => (
-                      <Pressable
-                        key={rec.id}
-                        onPress={() => {
-                          setActiveRecIndex(idx);
-                          void unloadAudio();
-                        }}
-                        style={[
-                          styles.chip,
-                          {
-                            backgroundColor: idx === activeRecIndex ? theme.accent : theme.chipBg,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={{
-                            color: idx === activeRecIndex ? theme.accentText : theme.text,
-                            fontSize: 12,
-                            fontWeight: '600',
-                          }}
-                        >
-                          {rec.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                ) : null}
-
-                <View style={styles.playerRow}>
-                  {studioPlayback.kind === 'youtube' ? (
-                    <Pressable
-                      onPress={() => void openYouTubeUrl(studioPlayback.url)}
-                      style={[styles.playBtn, { backgroundColor: theme.youtubeBg }]}
-                    >
-                      <Text style={[styles.playBtnText, { color: theme.youtubeText }]}>
-                        ▶ Watch on YouTube
-                        {studioPlayback.chapterLabel ? ` (${studioPlayback.chapterLabel})` : ''}
-                      </Text>
-                    </Pressable>
-                  ) : studioPlayback.kind === 'audio' ? (
-                    <Pressable
-                      onPress={() => void playAudioUri(studioPlayback.uri)}
-                      style={[styles.playBtn, { backgroundColor: theme.accent }]}
-                    >
-                      {isLoadingAudio ? (
-                        <ActivityIndicator color={theme.accentText} />
-                      ) : (
-                        <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                          {isPlaying ? 'Pause Jam Track' : 'Play Jam Track'}
-                        </Text>
-                      )}
-                    </Pressable>
-                  ) : (
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                        {studioPlayback.reason}
-                      </Text>
-                    </View>
-                  )}
-
-                  <Pressable
-                    onPress={openCorrectionModal}
-                    style={[
-                      styles.secondaryBtn,
-                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                    ]}
-                  >
-                    <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
-                      {activeStudioBhajan?.lyricsMissing
-                        ? 'Add Lyrics / Metadata'
-                        : 'Suggest Edit'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {audioMessage ? (
-                  <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                    {audioMessage}
-                  </Text>
-                ) : null}
-
-                {/* Multi-Script Lyrics */}
-                <View style={styles.lyricsBox}>
-                  <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>LYRICS</Text>
-                  {(activeStudioBhajan?.lyricsSets.length ?? 0) > 1 && (
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      style={styles.chipsRow}
-                    >
-                      {activeStudioBhajan?.lyricsSets.map((ls, idx) => (
-                        <Pressable
-                          key={`${ls.language}-${idx}`}
-                          onPress={() => setActiveScriptIdx(idx)}
-                          style={[
-                            styles.chip,
-                            {
-                              backgroundColor:
-                                idx === activeScriptIdx ? theme.accent : theme.chipBg,
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={{
-                              color: idx === activeScriptIdx ? theme.accentText : theme.text,
-                              fontSize: 12,
-                              fontWeight: '600',
-                            }}
-                          >
-                            {ls.language}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  )}
-                  {studioLyricsSet?.lines?.length ? (
-                    studioLyricsSet.lines.map((line, i) => (
-                      <Text
-                        key={`${activeStudioEntry.id}-line-${i}`}
-                        style={[styles.lyricLine, { color: theme.text }]}
-                      >
-                        {line}
-                      </Text>
-                    ))
-                  ) : (
-                    <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                      Lyrics are not yet populated for this bhajan. Tap “Add Lyrics / Metadata” to
-                      contribute.
-                    </Text>
-                  )}
-                </View>
-
-                {/* Raga, Notation & Meaning */}
-                {(activeStudioBhajan?.raga?.arohanam ||
-                  activeStudioBhajan?.firstLineNotes?.sargam ||
-                  activeStudioBhajan?.meaning ||
-                  (activeStudioBhajan?.glossary.length ?? 0) > 0) && (
+                  {/* Nullable-safe Pitch Transposer */}
                   <View
                     style={[
                       styles.pitchBox,
                       { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
                     ]}
                   >
-                    <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>
-                      RAGA, NOTATION &amp; MEANING
-                    </Text>
-                    {activeStudioBhajan?.raga?.arohanam ? (
-                      <Text style={[styles.metaLine, { color: theme.text }]}>
-                        Arohanam: {activeStudioBhajan.raga.arohanam}
+                    <View style={styles.pitchHeaderRow}>
+                      <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>
+                        KEY &amp; SHRUTI TRANSPOSER
                       </Text>
-                    ) : null}
-                    {activeStudioBhajan?.raga?.avarohanam ? (
-                      <Text style={[styles.metaLine, { color: theme.text }]}>
-                        Avarohanam: {activeStudioBhajan.raga.avarohanam}
-                      </Text>
-                    ) : null}
-                    {activeStudioBhajan?.firstLineNotes?.sargam ? (
-                      <Text style={[styles.metaLine, { color: theme.text }]}>
-                        Sargam: {activeStudioBhajan.firstLineNotes.sargam}
-                      </Text>
-                    ) : null}
-                    {activeStudioBhajan?.firstLineNotes?.westernInC ? (
-                      <Text style={[styles.metaLine, { color: theme.text }]}>
-                        Western (C): {activeStudioBhajan.firstLineNotes.westernInC}
-                      </Text>
-                    ) : null}
-                    {activeStudioBhajan?.meaning ? (
-                      <Text style={[styles.metaLine, { color: theme.text }]}>
-                        Meaning: {activeStudioBhajan.meaning}
-                      </Text>
-                    ) : null}
-                    {activeStudioBhajan?.glossary.slice(0, 6).map((g) => (
-                      <Text key={g.term} style={[styles.listMeta, { color: theme.textMuted }]}>
-                        • {g.term}: {g.description}
-                      </Text>
-                    ))}
+                      <View style={styles.refSwitch}>
+                        {(['gents', 'ladies'] as const).map((refKey) => {
+                          const active = pitchReference === refKey;
+                          return (
+                            <Pressable
+                              key={refKey}
+                              onPress={() => setPitchReference(refKey)}
+                              style={[
+                                styles.refPill,
+                                { backgroundColor: active ? theme.accent : theme.chipBg },
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.refPillText,
+                                  { color: active ? theme.accentText : theme.text },
+                                ]}
+                              >
+                                {refKey === 'gents' ? 'Gents' : 'Ladies'}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    <View style={styles.transposeControls}>
+                      <Pressable
+                        onPress={() => setSemitoneDelta((d) => Math.max(-6, d - 1))}
+                        style={[
+                          styles.stepBtn,
+                          { borderColor: theme.border, backgroundColor: theme.surface },
+                        ]}
+                      >
+                        <Text style={[styles.stepBtnText, { color: theme.text }]}>−1 st</Text>
+                      </Pressable>
+                      <View style={styles.pitchReadout}>
+                        <Text style={[styles.pitchValue, { color: theme.text }]}>
+                          {studioTransposed.pancham} ({studioTransposed.western})
+                        </Text>
+                        <Text style={[styles.pitchSub, { color: theme.textMuted }]}>
+                          {studioTransposed.freqHz.toFixed(1)} Hz · {studioTransposed.deltaLabel}
+                          {!studioBasePitch ? ' · Default ref (D)' : ''}
+                        </Text>
+                      </View>
+                      <Pressable
+                        onPress={() => setSemitoneDelta((d) => Math.min(6, d + 1))}
+                        style={[
+                          styles.stepBtn,
+                          { borderColor: theme.border, backgroundColor: theme.surface },
+                        ]}
+                      >
+                        <Text style={[styles.stepBtnText, { color: theme.text }]}>+1 st</Text>
+                      </Pressable>
+                    </View>
                   </View>
-                )}
-              </View>
-            )}
 
-            {/* Searchable Catalog Browser */}
-            <View style={styles.catalogSection}>
-              <Text style={[styles.sectionHeading, { color: theme.text }]}>
-                Browse Catalog ({filteredStudioEntries.length})
-              </Text>
-              <TextInput
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                placeholder="Phonetic search: Vittala, Narayana, Bowli, Ganesha..."
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.searchInput,
-                  { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
-                ]}
-              />
-              <Pressable
-                onPress={() => setOnlyVerified((v) => !v)}
-                style={[
-                  styles.smallBtn,
-                  {
-                    alignSelf: 'flex-start',
-                    borderWidth: 1,
-                    borderColor: onlyVerified ? theme.accent : theme.border,
-                    backgroundColor: onlyVerified ? theme.accent : theme.surface,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.smallBtnText,
-                    { color: onlyVerified ? theme.accentText : theme.text },
-                  ]}
-                >
-                  {onlyVerified ? '✓ Sai Rhythms Only' : 'Filter: Sai Rhythms Only'}
-                </Text>
-              </Pressable>
-
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsRow}>
-                {deities.map((deity) => (
-                  <Pressable
-                    key={deity}
-                    onPress={() => setSelectedDeity(deity)}
-                    style={[
-                      styles.chip,
-                      { backgroundColor: selectedDeity === deity ? theme.accent : theme.chipBg },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: selectedDeity === deity ? theme.accentText : theme.text,
-                        fontSize: 12,
-                        fontWeight: '600',
-                      }}
+                  {/* Recording Vault */}
+                  {activeStudioBhajan?.recordings.length ? (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.chipsRow}
                     >
-                      {deity}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
+                      {activeStudioBhajan.recordings.map((rec, idx) => (
+                        <Pressable
+                          key={rec.id}
+                          onPress={() => {
+                            setActiveRecIndex(idx);
+                            void unloadAudio();
+                          }}
+                          style={[
+                            styles.chip,
+                            {
+                              backgroundColor: idx === activeRecIndex ? theme.accent : theme.chipBg,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={{
+                              color: idx === activeRecIndex ? theme.accentText : theme.text,
+                              fontSize: 12,
+                              fontWeight: '600',
+                            }}
+                          >
+                            {rec.label}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  ) : null}
 
-              <FlatList
-                data={filteredStudioEntries.slice(0, 60)}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-                renderItem={({ item }) => {
-                  const active = item.id === activeStudioEntry?.id;
-                  return (
+                  {studioPlayback.kind === 'youtube' ? (
+                    <View style={styles.sectionStack}>
+                      <MobileYouTubePlayer
+                        videoId={studioPlayback.videoId}
+                        title={studioActiveRecording?.label || activeStudioEntry.title}
+                        startSec={studioActiveRecording?.startSec}
+                        endSec={studioActiveRecording?.endSec}
+                        embeddable={studioPlayback.embeddable}
+                        autoPlay={false}
+                        mediaMode={streamMediaMode}
+                        onMediaModeChange={handleMediaModeChange}
+                        theme={theme}
+                      />
+                    </View>
+                  ) : studioPlayback.kind === 'audio' ? (
+                    <View style={styles.playerRow}>
+                      <Pressable
+                        onPress={() => {
+                          if (streamSessionActive) setStreamSessionActive(false);
+                          void playAudioUri(studioPlayback.uri);
+                        }}
+                        style={[styles.playBtn, { backgroundColor: theme.accent }]}
+                      >
+                        {isLoadingAudio ? (
+                          <ActivityIndicator color={theme.accentText} />
+                        ) : (
+                          <Text style={[styles.playBtnText, { color: theme.accentText }]}>
+                            {isAudioPlaying && loadedAudioUriRef.current === studioPlayback.uri
+                              ? 'Pause Jam Track'
+                              : 'Play Jam Track'}
+                          </Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                      {studioPlayback.reason}
+                    </Text>
+                  )}
+
+                  <View style={styles.playerRow}>
                     <Pressable
-                      onPress={() => openEntryInStudio(item.id)}
+                      onPress={openCorrectionModal}
                       style={[
-                        styles.listRow,
-                        {
-                          backgroundColor: active ? theme.surfaceRaised : theme.surface,
-                          borderColor: active ? theme.accent : theme.border,
-                        },
+                        styles.secondaryBtn,
+                        { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
                       ]}
                     >
-                      <Text style={[styles.listTitle, { color: theme.text }]}>{item.title}</Text>
-                      <Text style={[styles.listMeta, { color: theme.textMuted }]}>
-                        {[
-                          item.deity,
-                          item.ragaName,
-                          `${item.recordingCount} audio`,
-                          item.metadataSource === 'sairhythms_verified' ? 'Verified' : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
+                      <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
+                        {activeStudioBhajan?.lyricsMissing
+                          ? 'Add Lyrics / Metadata'
+                          : 'Suggest Edit'}
                       </Text>
                     </Pressable>
-                  );
-                }}
-              />
-            </View>
-          </View>
-        )}
+                  </View>
 
-        {/* LIKED TAB */}
-        {activeTab === 'liked' && (
-          <View style={styles.sectionStack}>
-            <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-              <Text style={[styles.heroTitle, { color: theme.text }]}>
-                Your Liked Bhajans ({likedEntries.length})
-              </Text>
-              <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                Saved automatically on your device across restarts.
-              </Text>
-              {likedEntries.length > 0 && (
-                <View style={styles.heroActions}>
-                  <Pressable
-                    onPress={() => {
-                      setStreamMode('liked_only');
-                      setStreamSeed((s) => s + 1);
-                      setActiveTab('stream');
-                    }}
-                    style={[styles.playBtn, { backgroundColor: theme.accent }]}
-                  >
-                    <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                      ▶ Stream Liked Radio
+                  {audioMessage ? (
+                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                      {audioMessage}
                     </Text>
-                  </Pressable>
+                  ) : null}
+
+                  {/* Multi-Script Lyrics */}
+                  <View style={styles.lyricsBox}>
+                    <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>LYRICS</Text>
+                    {(activeStudioBhajan?.lyricsSets.length ?? 0) > 1 && (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.chipsRow}
+                      >
+                        {activeStudioBhajan?.lyricsSets.map((ls, idx) => (
+                          <Pressable
+                            key={`${ls.language}-${idx}`}
+                            onPress={() => setActiveScriptIdx(idx)}
+                            style={[
+                              styles.chip,
+                              {
+                                backgroundColor:
+                                  idx === activeScriptIdx ? theme.accent : theme.chipBg,
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={{
+                                color: idx === activeScriptIdx ? theme.accentText : theme.text,
+                                fontSize: 12,
+                                fontWeight: '600',
+                              }}
+                            >
+                              {ls.language}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+                    )}
+                    {studioLyricsSet?.lines?.length ? (
+                      studioLyricsSet.lines.map((line, i) => (
+                        <Text
+                          key={`${activeStudioEntry.id}-line-${i}`}
+                          style={[styles.lyricLine, { color: theme.text }]}
+                        >
+                          {line}
+                        </Text>
+                      ))
+                    ) : (
+                      <Text style={[styles.metaLine, { color: theme.textMuted }]}>
+                        Lyrics are not yet populated for this bhajan. Tap “Add Lyrics / Metadata” to
+                        contribute.
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Raga, Notation & Meaning */}
+                  {(activeStudioBhajan?.raga?.arohanam ||
+                    activeStudioBhajan?.firstLineNotes?.sargam ||
+                    activeStudioBhajan?.meaning ||
+                    (activeStudioBhajan?.glossary.length ?? 0) > 0) && (
+                    <View
+                      style={[
+                        styles.pitchBox,
+                        { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+                      ]}
+                    >
+                      <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>
+                        RAGA, NOTATION &amp; MEANING
+                      </Text>
+                      {activeStudioBhajan?.raga?.arohanam ? (
+                        <Text style={[styles.metaLine, { color: theme.text }]}>
+                          Arohanam: {activeStudioBhajan.raga.arohanam}
+                        </Text>
+                      ) : null}
+                      {activeStudioBhajan?.raga?.avarohanam ? (
+                        <Text style={[styles.metaLine, { color: theme.text }]}>
+                          Avarohanam: {activeStudioBhajan.raga.avarohanam}
+                        </Text>
+                      ) : null}
+                      {activeStudioBhajan?.firstLineNotes?.sargam ? (
+                        <Text style={[styles.metaLine, { color: theme.text }]}>
+                          Sargam: {activeStudioBhajan.firstLineNotes.sargam}
+                        </Text>
+                      ) : null}
+                      {activeStudioBhajan?.firstLineNotes?.westernInC ? (
+                        <Text style={[styles.metaLine, { color: theme.text }]}>
+                          Western (C): {activeStudioBhajan.firstLineNotes.westernInC}
+                        </Text>
+                      ) : null}
+                      {activeStudioBhajan?.meaning ? (
+                        <Text style={[styles.metaLine, { color: theme.text }]}>
+                          Meaning: {activeStudioBhajan.meaning}
+                        </Text>
+                      ) : null}
+                      {activeStudioBhajan?.glossary.slice(0, 6).map((g) => (
+                        <Text key={g.term} style={[styles.listMeta, { color: theme.textMuted }]}>
+                          • {g.term}: {g.description}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
 
-              {likedRagaChips.length > 0 && (
+              {/* Searchable Catalog Browser */}
+              <View style={styles.catalogSection}>
+                <Text style={[styles.sectionHeading, { color: theme.text }]}>
+                  Browse Catalog ({filteredStudioEntries.length})
+                </Text>
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Phonetic search: Vittala, Narayana, Bowli, Ganesha..."
+                  placeholderTextColor={theme.textMuted}
+                  style={[
+                    styles.searchInput,
+                    { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
+                  ]}
+                />
+                <Pressable
+                  onPress={() => setOnlyVerified((v) => !v)}
+                  style={[
+                    styles.smallBtn,
+                    {
+                      alignSelf: 'flex-start',
+                      borderWidth: 1,
+                      borderColor: onlyVerified ? theme.accent : theme.border,
+                      backgroundColor: onlyVerified ? theme.accent : theme.surface,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.smallBtnText,
+                      { color: onlyVerified ? theme.accentText : theme.text },
+                    ]}
+                  >
+                    {onlyVerified ? '✓ Sai Rhythms Only' : 'Filter: Sai Rhythms Only'}
+                  </Text>
+                </Pressable>
+
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   style={styles.chipsRow}
                 >
-                  <Pressable
-                    onPress={() => setLikedRagaFilter('')}
-                    style={[
-                      styles.chip,
-                      { backgroundColor: likedRagaFilter === '' ? theme.accent : theme.chipBg },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: likedRagaFilter === '' ? theme.accentText : theme.text,
-                        fontSize: 12,
-                        fontWeight: '600',
-                      }}
-                    >
-                      All Ragas ({likedEntries.length})
-                    </Text>
-                  </Pressable>
-                  {likedRagaChips.map((raga) => (
+                  {deities.map((deity) => (
                     <Pressable
-                      key={raga}
-                      onPress={() => setLikedRagaFilter(raga)}
+                      key={deity}
+                      onPress={() => setSelectedDeity(deity)}
                       style={[
                         styles.chip,
-                        { backgroundColor: likedRagaFilter === raga ? theme.accent : theme.chipBg },
+                        { backgroundColor: selectedDeity === deity ? theme.accent : theme.chipBg },
                       ]}
                     >
                       <Text
                         style={{
-                          color: likedRagaFilter === raga ? theme.accentText : theme.text,
+                          color: selectedDeity === deity ? theme.accentText : theme.text,
                           fontSize: 12,
                           fontWeight: '600',
                         }}
                       >
-                        {raga}
+                        {deity}
                       </Text>
                     </Pressable>
                   ))}
                 </ScrollView>
-              )}
 
-              {filteredLikedEntries.length > 0 ? (
-                filteredLikedEntries.map((entry) => (
-                  <View
-                    key={entry.id}
-                    style={[
-                      styles.recCard,
-                      { backgroundColor: theme.bg, borderColor: theme.border },
-                    ]}
-                  >
-                    <Text style={[styles.listTitle, { color: theme.text }]}>{entry.title}</Text>
-                    <Text style={[styles.listMeta, { color: theme.textMuted }]}>
-                      {[entry.deity, entry.ragaName, `${entry.recordingCount} audio`]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Text>
-                    <View style={styles.recActionsRow}>
+                <FlatList
+                  data={filteredStudioEntries.slice(0, 60)}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                  renderItem={({ item }) => {
+                    const active = item.id === activeStudioEntry?.id;
+                    return (
                       <Pressable
-                        onPress={() => playEntryInStream(entry)}
-                        style={[styles.smallBtn, { backgroundColor: theme.accent }]}
-                      >
-                        <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                          Stream
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => openEntryInStudio(entry.id)}
+                        onPress={() => openEntryInStudio(item.id)}
                         style={[
-                          styles.smallBtn,
+                          styles.listRow,
                           {
-                            borderWidth: 1,
-                            borderColor: theme.border,
-                            backgroundColor: theme.surfaceRaised,
+                            backgroundColor: active ? theme.surfaceRaised : theme.surface,
+                            borderColor: active ? theme.accent : theme.border,
                           },
                         ]}
                       >
-                        <Text style={[styles.smallBtnText, { color: theme.text }]}>Studio</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => handleToggleLike(entry.id)}
-                        style={[
-                          styles.smallBtn,
-                          {
-                            borderWidth: 1,
-                            borderColor: theme.accent,
-                            backgroundColor: theme.surfaceRaised,
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.smallBtnText, { color: theme.accent }]}>
-                          ♥ Remove
+                        <Text style={[styles.listTitle, { color: theme.text }]}>{item.title}</Text>
+                        <Text style={[styles.listMeta, { color: theme.textMuted }]}>
+                          {[
+                            item.deity,
+                            item.ragaName,
+                            `${item.recordingCount} audio`,
+                            item.metadataSource === 'sairhythms_verified' ? 'Verified' : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </Text>
                       </Pressable>
-                    </View>
-                  </View>
-                ))
-              ) : (
-                <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                  No liked bhajans yet. Start Random Stream or browse Studio and tap ♡ Like!
+                    );
+                  }}
+                />
+              </View>
+            </View>
+          )}
+
+          {/* LIKED TAB */}
+          {activeTab === 'liked' && (
+            <View style={styles.sectionStack}>
+              <View
+                style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}
+              >
+                <Text style={[styles.heroTitle, { color: theme.text }]}>
+                  Your Liked Bhajans ({likedEntries.length})
                 </Text>
+                <Text style={[styles.metaLine, { color: theme.textMuted }]}>
+                  Saved automatically on your device across restarts.
+                </Text>
+                {likedEntries.length > 0 && (
+                  <View style={styles.heroActions}>
+                    <Pressable
+                      onPress={() => {
+                        setStreamMode('liked_only');
+                        setStreamSeed((s) => s + 1);
+                        setStreamSessionActive(true);
+                        setActiveTab('stream');
+                      }}
+                      style={[styles.playBtn, { backgroundColor: theme.accent }]}
+                    >
+                      <Text style={[styles.playBtnText, { color: theme.accentText }]}>
+                        ▶ Stream Liked Radio
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
+
+                {likedRagaChips.length > 0 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.chipsRow}
+                  >
+                    <Pressable
+                      onPress={() => setLikedRagaFilter('')}
+                      style={[
+                        styles.chip,
+                        { backgroundColor: likedRagaFilter === '' ? theme.accent : theme.chipBg },
+                      ]}
+                    >
+                      <Text
+                        style={{
+                          color: likedRagaFilter === '' ? theme.accentText : theme.text,
+                          fontSize: 12,
+                          fontWeight: '600',
+                        }}
+                      >
+                        All Ragas ({likedEntries.length})
+                      </Text>
+                    </Pressable>
+                    {likedRagaChips.map((raga) => (
+                      <Pressable
+                        key={raga}
+                        onPress={() => setLikedRagaFilter(raga)}
+                        style={[
+                          styles.chip,
+                          {
+                            backgroundColor: likedRagaFilter === raga ? theme.accent : theme.chipBg,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: likedRagaFilter === raga ? theme.accentText : theme.text,
+                            fontSize: 12,
+                            fontWeight: '600',
+                          }}
+                        >
+                          {raga}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
+
+                {filteredLikedEntries.length > 0 ? (
+                  filteredLikedEntries.map((entry) => (
+                    <View
+                      key={entry.id}
+                      style={[
+                        styles.recCard,
+                        { backgroundColor: theme.bg, borderColor: theme.border },
+                      ]}
+                    >
+                      <Text style={[styles.listTitle, { color: theme.text }]}>{entry.title}</Text>
+                      <Text style={[styles.listMeta, { color: theme.textMuted }]}>
+                        {[entry.deity, entry.ragaName, `${entry.recordingCount} audio`]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Text>
+                      <View style={styles.recActionsRow}>
+                        <Pressable
+                          onPress={() => playEntryInStream(entry)}
+                          style={[styles.smallBtn, { backgroundColor: theme.accent }]}
+                        >
+                          <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
+                            Stream
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => openEntryInStudio(entry.id)}
+                          style={[
+                            styles.smallBtn,
+                            {
+                              borderWidth: 1,
+                              borderColor: theme.border,
+                              backgroundColor: theme.surfaceRaised,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.smallBtnText, { color: theme.text }]}>Studio</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => handleToggleLike(entry.id)}
+                          style={[
+                            styles.smallBtn,
+                            {
+                              borderWidth: 1,
+                              borderColor: theme.accent,
+                              backgroundColor: theme.surfaceRaised,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.smallBtnText, { color: theme.accent }]}>
+                            ♥ Remove
+                          </Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={[styles.metaLine, { color: theme.textMuted }]}>
+                    No liked bhajans yet. Start Random Stream or browse Studio and tap ♡ Like!
+                  </Text>
+                )}
+              </View>
+
+              {likedEntries.length > 0 && similarRecs.length > 0 && (
+                <View style={styles.sectionStack}>
+                  <Text style={[styles.sectionHeading, { color: theme.text }]}>
+                    Similar Raga Suggestions
+                  </Text>
+                  {similarRecs.slice(0, 6).map(renderRecommendationCard)}
+                </View>
               )}
             </View>
+          )}
+        </ScrollView>
 
-            {likedEntries.length > 0 && similarRecs.length > 0 && (
+        {/* PERSISTENT STREAM PLAYER SLOT — expands at top of Stream tab OR docks as minimized bottom bar on all other tabs WITHOUT unmounting */}
+        {showPersistentStream && activeStreamEntry && (
+          <View
+            style={[
+              streamIsMinimized ? styles.miniDockCard : styles.streamStageCard,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+            ]}
+          >
+            {streamIsMinimized ? (
+              <View style={styles.miniDockRow}>
+                <Pressable onPress={() => setActiveTab('stream')} style={{ flex: 1 }}>
+                  <Text style={[styles.miniKicker, { color: theme.accent }]}>
+                    Playing · {safeStreamIdx + 1}/{streamQueue.length}
+                  </Text>
+                  <Text numberOfLines={1} style={[styles.listTitle, { color: theme.text }]}>
+                    {activeStreamEntry.title}
+                  </Text>
+                </Pressable>
+
+                <View style={styles.miniControlsRow}>
+                  <Pressable
+                    onPress={() => advanceStream(-1)}
+                    style={[
+                      styles.miniIconBtn,
+                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                    ]}
+                    accessibilityLabel="Previous bhajan"
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.text }]}>◀</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleToggleStreamPlayPause}
+                    style={[
+                      styles.miniIconBtn,
+                      { borderColor: theme.accent, backgroundColor: theme.accent },
+                    ]}
+                    accessibilityLabel={effectiveStreamPlaying ? 'Pause' : 'Play'}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
+                      {effectiveStreamPlaying ? '⏸' : '▶'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => advanceStream(1)}
+                    style={[
+                      styles.miniIconBtn,
+                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                    ]}
+                    accessibilityLabel="Next bhajan"
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.text }]}>▶▶</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleToggleLike(activeStreamEntry.id)}
+                    style={[
+                      styles.miniIconBtn,
+                      {
+                        borderColor: activeStreamLiked ? theme.accent : theme.border,
+                        backgroundColor: theme.surfaceRaised,
+                      },
+                    ]}
+                    accessibilityLabel={activeStreamLiked ? 'Unlike bhajan' : 'Like bhajan'}
+                  >
+                    <Text
+                      style={[
+                        styles.smallBtnText,
+                        { color: activeStreamLiked ? theme.accent : theme.text },
+                      ]}
+                    >
+                      {activeStreamLiked ? '♥' : '♡'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleDismissStream}
+                    style={[
+                      styles.miniIconBtn,
+                      { borderColor: theme.border, backgroundColor: theme.bg },
+                    ]}
+                    accessibilityLabel="Close minimized stream"
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.textMuted }]}>✕</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
               <View style={styles.sectionStack}>
-                <Text style={[styles.sectionHeading, { color: theme.text }]}>
-                  Similar Raga Suggestions
+                <View style={styles.chipWrap}>
+                  <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                    <Text style={[styles.badgeText, { color: theme.text }]}>
+                      Track {safeStreamIdx + 1} of {streamQueue.length}
+                    </Text>
+                  </View>
+                  {activeStreamEntry.deity ? (
+                    <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                      <Text style={[styles.badgeText, { color: theme.text }]}>
+                        {activeStreamEntry.deity}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {activeStreamEntry.ragaName ? (
+                    <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                      <Text style={[styles.badgeText, { color: theme.text }]}>
+                        Raga: {activeStreamEntry.ragaName}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {streamHasAudioOption && !streamHasVideoOption && (
+                    <View style={[styles.badge, { backgroundColor: theme.badgeSuccessBg }]}>
+                      <Text style={[styles.badgeText, { color: theme.badgeSuccessText }]}>
+                        Audio-only
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <Text style={[styles.bhajanTitle, { color: theme.text }]}>
+                  {activeStreamEntry.title}
                 </Text>
-                {similarRecs.slice(0, 6).map(renderRecommendationCard)}
+
+                <View style={styles.recActionsRow}>
+                  <Pressable
+                    onPress={() => advanceStream(-1)}
+                    style={[
+                      styles.smallBtn,
+                      { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
+                    ]}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.text }]}>◀ Prev</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handleToggleLike(activeStreamEntry.id)}
+                    style={[
+                      styles.smallBtn,
+                      {
+                        borderWidth: 1,
+                        borderColor: activeStreamLiked ? theme.accent : theme.border,
+                        backgroundColor: theme.bg,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.smallBtnText,
+                        { color: activeStreamLiked ? theme.accent : theme.text },
+                      ]}
+                    >
+                      {activeStreamLiked ? '♥ Liked' : '♡ Like'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => advanceStream(1)}
+                    style={[styles.smallBtn, { backgroundColor: theme.accent }]}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.accentText }]}>Next ▶</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openEntryInStudio(activeStreamEntry.id)}
+                    style={[
+                      styles.smallBtn,
+                      { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
+                    ]}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.text }]}>Open in Studio</Text>
+                  </Pressable>
+                </View>
               </View>
             )}
+
+            {/* Embedded Player — stays mounted cleanly across full <-> minimized transitions */}
+            {streamLoadingDetail && !activeStreamBhajan ? (
+              <View style={styles.inlineRow}>
+                <ActivityIndicator color={theme.accent} />
+                <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                  Loading stream audio and lyrics…
+                </Text>
+              </View>
+            ) : streamDetailFailed && !activeStreamBhajan ? (
+              <View style={styles.inlineRow}>
+                <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                  Could not load details right now.
+                </Text>
+                <Pressable
+                  onPress={() =>
+                    void loadDetailForId(
+                      activeStreamEntry.id,
+                      setStreamLoadingDetail,
+                      setStreamDetailFailed,
+                    )
+                  }
+                  style={[
+                    styles.smallBtn,
+                    { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
+                  ]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.text }]}>Retry</Text>
+                </Pressable>
+              </View>
+            ) : streamPlayback.kind === 'youtube' ? (
+              <View style={streamIsMinimized ? styles.miniYtWrap : undefined}>
+                <MobileYouTubePlayer
+                  ref={ytStreamRef}
+                  videoId={streamPlayback.videoId}
+                  title={streamPreferredRec?.label || activeStreamEntry.title}
+                  startSec={streamPreferredRec?.startSec}
+                  endSec={streamPreferredRec?.endSec}
+                  embeddable={streamPlayback.embeddable}
+                  autoPlay={streamAutoPlay}
+                  mediaMode={streamMediaMode}
+                  onMediaModeChange={handleMediaModeChange}
+                  minimized={streamIsMinimized}
+                  onPlayStateChange={setStreamYtPlaying}
+                  onEnded={() => {
+                    if (streamAutoPlay) advanceStream(1);
+                  }}
+                  theme={theme}
+                />
+              </View>
+            ) : streamPlayback.kind === 'audio' && !streamIsMinimized ? (
+              <Pressable
+                onPress={() => void playAudioUri(streamPlayback.uri)}
+                style={[styles.playBtn, { backgroundColor: theme.accent }]}
+              >
+                {isLoadingAudio ? (
+                  <ActivityIndicator color={theme.accentText} />
+                ) : (
+                  <Text style={[styles.playBtnText, { color: theme.accentText }]}>
+                    {isAudioPlaying ? 'Pause Stream Audio' : '▶ Play Stream Audio'}
+                  </Text>
+                )}
+              </Pressable>
+            ) : streamPlayback.kind === 'none' && !streamIsMinimized ? (
+              <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                {streamPlayback.reason}
+              </Text>
+            ) : null}
           </View>
         )}
-      </ScrollView>
+      </View>
 
       {/* Bottom Tab Navigation Bar (>= 46pt touch targets) */}
       <View
@@ -2039,8 +2287,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   modeButtonText: { fontSize: 12, fontWeight: '600' },
-  container: { padding: 14, gap: 14, paddingBottom: 28 },
-  sectionStack: { gap: 12 },
+  container: { padding: 14, gap: 14, paddingBottom: 24 },
+  sectionStack: { gap: 10 },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2053,6 +2301,47 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 14,
     gap: 12,
+  },
+  streamStageCard: {
+    borderBottomWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  miniDockCard: {
+    borderTopWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  miniDockRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  miniKicker: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  miniControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  miniIconBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    minWidth: 36,
+    minHeight: 36,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniYtWrap: {
+    alignSelf: 'flex-start',
   },
   heroTitle: { fontSize: 20, fontWeight: '700' },
   heroActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

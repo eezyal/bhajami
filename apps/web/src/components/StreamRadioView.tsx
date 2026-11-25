@@ -1,15 +1,23 @@
 'use client';
 
-import type {
-  Bhajan,
-  BhajanIndexEntry,
-  BhajanRecommendation,
-  RecordingSource,
-  StreamModeKind,
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  pickStreamRecording,
+  type Bhajan,
+  type BhajanIndexEntry,
+  type BhajanRecommendation,
+  type StreamMediaMode,
+  type StreamModeKind,
 } from '@bhajami/shared';
-import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
+import {
+  YouTubeSegmentPlayer,
+  type YouTubeSegmentPlayerHandle,
+} from './YouTubeSegmentPlayer';
 
 interface StreamRadioViewProps {
+  minimized?: boolean;
+  mediaMode: StreamMediaMode;
+  onMediaModeChange: (nextMode: StreamMediaMode) => void;
   mode: StreamModeKind;
   onModeChange: (nextMode: StreamModeKind) => void;
   deityFilter: string;
@@ -34,20 +42,15 @@ interface StreamRadioViewProps {
   onOpenInStudio: (bhajanId: string) => void;
   onPlayEntry: (entry: BhajanIndexEntry) => void;
   onRetryDetail?: () => void;
+  onExpand?: () => void;
+  onDismiss?: () => void;
   similarRecs: BhajanRecommendation[];
 }
 
-function pickPlayableRecording(bhajan?: Bhajan | null): RecordingSource | null {
-  if (!bhajan?.recordings?.length) return null;
-  return (
-    bhajan.recordings.find((r) => Boolean(r.youtubeVideoId) && r.embeddable !== false) ||
-    bhajan.recordings.find((r) => Boolean(r.externalUrl || r.localPath || r.youtubeVideoId)) ||
-    bhajan.recordings[0] ||
-    null
-  );
-}
-
 export function StreamRadioView({
+  minimized = false,
+  mediaMode,
+  onMediaModeChange,
   mode,
   onModeChange,
   deityFilter,
@@ -72,120 +75,240 @@ export function StreamRadioView({
   onOpenInStudio,
   onPlayEntry,
   onRetryDetail,
+  onExpand,
+  onDismiss,
   similarRecs,
 }: StreamRadioViewProps) {
-  const activeRec = pickPlayableRecording(currentBhajan);
-  const audioUrl = activeRec
-    ? activeRec.localPath
-      ? `/api/local-audio?id=${encodeURIComponent(activeRec.id)}&bhajanId=${encodeURIComponent(currentBhajan?.id || '')}`
-      : activeRec.externalUrl || ''
-    : '';
+  const ytPlayerRef = useRef<YouTubeSegmentPlayerHandle>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const { recording: activeRec, hasAudioOption, hasVideoOption } = pickStreamRecording(
+    currentBhajan,
+    mediaMode,
+  );
+  const audioUrl =
+    activeRec && !activeRec.youtubeVideoId
+      ? activeRec.localPath
+        ? `/api/local-audio?id=${encodeURIComponent(activeRec.id)}&bhajanId=${encodeURIComponent(currentBhajan?.id || '')}`
+        : activeRec.externalUrl || ''
+      : '';
   const isLiked = currentEntry ? likedSet.has(currentEntry.id) : false;
 
+  useEffect(() => {
+    setIsPlaying(autoPlay);
+  }, [autoPlay, currentEntry?.id, activeRec?.id]);
+
+  const handleTogglePlayPause = useCallback(() => {
+    if (activeRec?.youtubeVideoId) {
+      ytPlayerRef.current?.togglePlay();
+      return;
+    }
+    const audioEl = audioRef.current;
+    if (!audioEl) return;
+    if (audioEl.paused) {
+      void audioEl.play().catch(() => {});
+    } else {
+      audioEl.pause();
+    }
+  }, [activeRec?.youtubeVideoId]);
+
+  const mediaModeLabel = mediaMode === 'audio' ? 'Audio (Data Saver)' : 'Video';
+
   return (
-    <div className="app-stage">
-      <div className="stream-stage-card">
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: '0.75rem',
-          }}
-        >
-          <div>
-            <h1 style={{ margin: 0, fontSize: '1.45rem' }}>Continuous Bhajan Stream</h1>
-            <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
-              Shuffle across verified bhajans, curate favorites with ♥, and auto-blend matching Ragas.
-            </p>
-          </div>
-          <div className="stream-controls-row">
-            <button
-              type="button"
-              className={`btn btn-sm ${mode === 'discovery' ? 'btn-primary' : ''}`}
-              aria-pressed={mode === 'discovery'}
-              onClick={() => onModeChange('discovery')}
-            >
-              Random Stream
-            </button>
-            {likedSet.size >= 3 && (
-              <button
-                type="button"
-                className={`btn btn-sm ${mode === 'for_you' ? 'btn-primary' : ''}`}
-                aria-pressed={mode === 'for_you'}
-                onClick={() => onModeChange('for_you')}
-              >
-                For You
-              </button>
-            )}
-            <button
-              type="button"
-              className={`btn btn-sm ${mode === 'liked_only' ? 'btn-primary' : ''}`}
-              aria-pressed={mode === 'liked_only'}
-              onClick={() => onModeChange('liked_only')}
-            >
-              Liked Radio ({likedSet.size})
-            </button>
-          </div>
-        </div>
-
-        <div className="stream-controls-row">
-          <label htmlFor="stream-deity-filter" className="field-hint" style={{ margin: 0 }}>
-            Deity:
-          </label>
-          <select
-            id="stream-deity-filter"
-            className="select-control"
-            style={{ width: 'auto', maxWidth: '180px' }}
-            value={deityFilter}
-            onChange={(e) => onDeityFilterChange(e.target.value)}
-          >
-            {deityChoices.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="stream-raga-filter" className="field-hint" style={{ margin: 0 }}>
-            Raga:
-          </label>
-          <select
-            id="stream-raga-filter"
-            className="select-control"
-            style={{ width: 'auto', maxWidth: '200px' }}
-            value={ragaFilter}
-            onChange={(e) => onRagaFilterChange(e.target.value)}
-          >
-            <option value="">All Ragas</option>
-            {availableRagas.map((r) => (
-              <option key={r} value={r}>
-                {r}
-              </option>
-            ))}
-          </select>
-
-          <label
+    <div className={minimized ? 'mini-stream-host' : 'app-stage'}>
+      {!minimized && (
+        <div className="stream-stage-card" style={{ marginBottom: '0.9rem' }}>
+          <div
             style={{
-              display: 'inline-flex',
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
               alignItems: 'center',
-              gap: '0.4rem',
-              fontSize: '0.84rem',
-              cursor: 'pointer',
+              gap: '0.75rem',
             }}
           >
-            <input type="checkbox" checked={autoPlay} onChange={onToggleAutoPlay} />
-            <span>Auto-advance</span>
-          </label>
+            <div>
+              <h1 style={{ margin: 0, fontSize: '1.45rem' }}>Continuous Bhajan Stream</h1>
+              <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
+                Starts in Data Saver mode and keeps playing in a bottom bar while you browse.
+              </p>
+            </div>
+            <div className="stream-controls-row">
+              <button
+                type="button"
+                className={`btn btn-sm ${mode === 'discovery' ? 'btn-primary' : ''}`}
+                aria-pressed={mode === 'discovery'}
+                onClick={() => onModeChange('discovery')}
+              >
+                Random Stream
+              </button>
+              {likedSet.size >= 3 && (
+                <button
+                  type="button"
+                  className={`btn btn-sm ${mode === 'for_you' ? 'btn-primary' : ''}`}
+                  aria-pressed={mode === 'for_you'}
+                  onClick={() => onModeChange('for_you')}
+                >
+                  For You
+                </button>
+              )}
+              <button
+                type="button"
+                className={`btn btn-sm ${mode === 'liked_only' ? 'btn-primary' : ''}`}
+                aria-pressed={mode === 'liked_only'}
+                onClick={() => onModeChange('liked_only')}
+              >
+                Liked Radio ({likedSet.size})
+              </button>
+            </div>
+          </div>
 
-          <button type="button" className="btn btn-sm" onClick={onReshuffle}>
-            Reshuffle
-          </button>
+          <div className="stream-controls-row">
+            <label htmlFor="stream-deity-filter" className="field-hint" style={{ margin: 0 }}>
+              Deity:
+            </label>
+            <select
+              id="stream-deity-filter"
+              className="select-control"
+              style={{ width: 'auto', maxWidth: '180px' }}
+              value={deityFilter}
+              onChange={(e) => onDeityFilterChange(e.target.value)}
+            >
+              {deityChoices.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+
+            <label htmlFor="stream-raga-filter" className="field-hint" style={{ margin: 0 }}>
+              Raga:
+            </label>
+            <select
+              id="stream-raga-filter"
+              className="select-control"
+              style={{ width: 'auto', maxWidth: '200px' }}
+              value={ragaFilter}
+              onChange={(e) => onRagaFilterChange(e.target.value)}
+            >
+              <option value="">All Ragas</option>
+              {availableRagas.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              className={`btn btn-sm ${mediaMode === 'audio' ? 'btn-success' : 'btn-primary'}`}
+              aria-pressed={mediaMode === 'audio'}
+              onClick={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
+              title="Toggle sticky Audio Saver vs Video mode across all tracks"
+            >
+              Mode: {mediaModeLabel}
+            </button>
+
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontSize: '0.84rem',
+                cursor: 'pointer',
+              }}
+            >
+              <input type="checkbox" checked={autoPlay} onChange={onToggleAutoPlay} />
+              <span>Auto-advance</span>
+            </label>
+
+            <button type="button" className="btn btn-sm" onClick={onReshuffle}>
+              Reshuffle
+            </button>
+          </div>
         </div>
+      )}
 
-        {currentEntry ? (
-          <div className="control-box" style={{ display: 'grid', gap: '0.75rem' }}>
+      {currentEntry ? (
+        <div
+          className={minimized ? 'mini-stream-dock' : 'stream-stage-card'}
+          role={minimized ? 'region' : undefined}
+          aria-label={minimized ? `Minimized Bhajan Player: ${currentEntry.title}` : undefined}
+        >
+          {minimized ? (
+            <div className="mini-stream-bar-row">
+              <button
+                type="button"
+                className="mini-stream-title-btn"
+                onClick={onExpand}
+                title="Open full Stream player"
+              >
+                <span className="mini-stream-kicker">
+                  Now Playing · {queueIndex + 1}/{queue.length}
+                </span>
+                <span className="mini-stream-title">{currentEntry.title}</span>
+              </button>
+
+              <div className="mini-stream-controls">
+                <button
+                  type="button"
+                  className="btn btn-sm mini-icon-btn"
+                  aria-label="Previous bhajan"
+                  onClick={onPrev}
+                  disabled={queue.length <= 1}
+                >
+                  ◀
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary mini-icon-btn"
+                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                  onClick={handleTogglePlayPause}
+                >
+                  {isPlaying ? '⏸' : '▶'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm mini-icon-btn"
+                  aria-label="Next bhajan"
+                  onClick={onNext}
+                  disabled={queue.length <= 1}
+                >
+                  ▶▶
+                </button>
+                <button
+                  type="button"
+                  className="like-btn mini-icon-btn"
+                  aria-pressed={isLiked}
+                  aria-label={isLiked ? `Unlike ${currentEntry.title}` : `Like ${currentEntry.title}`}
+                  onClick={() => onToggleLike(currentEntry.id)}
+                >
+                  {isLiked ? '♥' : '♡'}
+                </button>
+                {hasVideoOption && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
+                    aria-label="Toggle Audio or Video mode"
+                  >
+                    {mediaMode === 'audio' ? 'Audio' : 'Video'}
+                  </button>
+                )}
+                {onDismiss && (
+                  <button
+                    type="button"
+                    className="btn btn-sm mini-icon-btn"
+                    aria-label="Close minimized player"
+                    onClick={onDismiss}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
             <div
               style={{
                 display: 'flex',
@@ -205,6 +328,9 @@ export function StreamRadioView({
                     <span className="badge">Raga: {currentEntry.ragaName}</span>
                   )}
                   {currentEntry.beat && <span className="badge">Beat: {currentEntry.beat}</span>}
+                  {hasAudioOption && !hasVideoOption && (
+                    <span className="badge badge-verified">Audio-only track</span>
+                  )}
                 </div>
                 <h2 style={{ margin: '0 0 0.2rem', fontSize: '1.35rem' }}>{currentEntry.title}</h2>
                 {currentBhajan?.gentsPitch?.raw || currentBhajan?.ladiesPitch?.raw ? (
@@ -246,25 +372,41 @@ export function StreamRadioView({
                 </button>
               </div>
             </div>
+          )}
 
+          {/* Fixed-position media wrapper so switching full <-> minimized keeps playback uninterrupted */}
+          <div className={minimized ? 'mini-stream-media' : undefined}>
             {loadingDetail && !currentBhajan ? (
-              <p className="field-hint">Loading stream audio and lyrics…</p>
+              <p className="field-hint" style={{ margin: 0 }}>
+                Loading stream audio and lyrics…
+              </p>
             ) : activeRec?.youtubeVideoId ? (
               <YouTubeSegmentPlayer
+                ref={ytPlayerRef}
                 videoId={activeRec.youtubeVideoId}
                 title={activeRec.label}
                 startSec={activeRec.startSec}
                 endSec={activeRec.endSec}
                 embeddable={activeRec.embeddable}
                 autoPlay={autoPlay}
+                mediaMode={mediaMode}
+                onMediaModeChange={onMediaModeChange}
+                minimized={minimized}
                 onEnded={autoPlay ? onNext : undefined}
+                onPlayStateChange={setIsPlaying}
               />
             ) : audioUrl ? (
               <audio
+                ref={audioRef}
                 key={`${currentEntry.id}-${audioUrl}`}
-                controls
+                controls={!minimized}
                 autoPlay={autoPlay}
-                onEnded={autoPlay ? onNext : undefined}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onEnded={() => {
+                  setIsPlaying(false);
+                  if (autoPlay) onNext();
+                }}
                 src={audioUrl}
                 style={{ width: '100%' }}
               />
@@ -282,23 +424,25 @@ export function StreamRadioView({
                 No playable audio source is linked to this bhajan yet — click Next or Open in Studio.
               </p>
             )}
-
-            {currentBhajan?.lyricsSets?.[0]?.lines?.length ? (
-              <details>
-                <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
-                  Show Lyrics ({currentBhajan.lyricsSets[0].language})
-                </summary>
-                <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.2rem' }}>
-                  {currentBhajan.lyricsSets[0].lines.map((line, i) => (
-                    <div key={`${i}-${line}`} style={{ fontSize: '0.92rem' }}>
-                      {line}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            ) : null}
           </div>
-        ) : (
+
+          {!minimized && currentBhajan?.lyricsSets?.[0]?.lines?.length ? (
+            <details>
+              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
+                Show Lyrics ({currentBhajan.lyricsSets[0].language})
+              </summary>
+              <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.2rem' }}>
+                {currentBhajan.lyricsSets[0].lines.map((line, i) => (
+                  <div key={`${i}-${line}`} style={{ fontSize: '0.92rem' }}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </div>
+      ) : !minimized ? (
+        <div className="stream-stage-card">
           <div className="control-box">
             <p style={{ margin: 0 }}>
               {mode === 'liked_only'
@@ -306,10 +450,10 @@ export function StreamRadioView({
                 : 'No bhajans matched the selected Deity/Raga filter.'}
             </p>
           </div>
-        )}
-      </div>
+        </div>
+      ) : null}
 
-      {queue.length > 0 && (
+      {!minimized && queue.length > 0 && (
         <section className="rec-shelf-section" aria-label="Up Next in Stream">
           <div className="rec-shelf-header">
             <h2>Up Next in Stream</h2>
@@ -353,7 +497,7 @@ export function StreamRadioView({
         </section>
       )}
 
-      {likedSet.size > 0 && similarRecs.length > 0 && (
+      {!minimized && likedSet.size > 0 && similarRecs.length > 0 && (
         <section className="rec-shelf-section" aria-label="Similar Raga Recommendations">
           <div className="rec-shelf-header">
             <h2>Recommended From Your Liked Ragas</h2>

@@ -999,6 +999,15 @@ a:focus-visible {
   gap: 0.45rem;
 }
 
+.yt-player-shell--compact {
+  max-width: 340px;
+}
+
+.yt-player-shell--minimized {
+  max-width: 320px;
+  gap: 0;
+}
+
 .yt-player-frame {
   width: 100%;
   min-width: 320px;
@@ -1244,5 +1253,99 @@ a:focus-visible {
     color: var(--accent);
     border-color: var(--accent);
     font-weight: 700;
+  }
+}
+
+.portal-shell.has-mini-stream {
+  padding-bottom: calc(14.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+.mini-stream-dock {
+  position: fixed;
+  left: max(0.75rem, env(safe-area-inset-left, 0px));
+  right: max(0.75rem, env(safe-area-inset-right, 0px));
+  bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  z-index: 28;
+  max-width: 960px;
+  margin-inline: auto;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 0.65rem 0.85rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.mini-stream-bar-row {
+  flex: 1 1 280px;
+  min-inline-size: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.mini-stream-title-btn {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  border: 0;
+  background: transparent;
+  padding: 0.2rem 0;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.mini-stream-kicker {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.mini-stream-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-stream-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.mini-icon-btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0.25rem 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mini-stream-media {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 767px) {
+  .mini-stream-dock {
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    padding: 0.5rem 0.65rem;
+  }
+
+  .mini-stream-media {
+    width: 100%;
+    max-width: 320px;
   }
 }

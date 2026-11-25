@@ -1,6 +1,7 @@
-import type { BhajanIndexEntry } from './types';
+import type { Bhajan, BhajanIndexEntry, RecordingSource } from './types';
 
 export type StreamModeKind = 'discovery' | 'for_you' | 'liked_only';
+export type StreamMediaMode = 'audio' | 'video';
 
 export interface BhajanRecommendation {
   entry: BhajanIndexEntry;
@@ -319,4 +320,52 @@ export function buildStreamQueue(
     }
   }
   return interleaved;
+}
+
+/** Returns true if a recording provides a direct non-YouTube audio stream or file. */
+export function isDirectAudioRecording(rec: RecordingSource): boolean {
+  if (rec.youtubeVideoId) return false;
+  const url = rec.externalUrl?.trim() || '';
+  if (url && /(?:youtube\.com|youtu\.be)/i.test(url)) return false;
+  return Boolean(url || rec.localPath?.trim());
+}
+
+/** Returns true if a recording references a YouTube video (embeddable or link). */
+export function isYouTubeRecording(rec: RecordingSource): boolean {
+  if (rec.youtubeVideoId?.trim()) return true;
+  return Boolean(rec.externalUrl && /(?:youtube\.com|youtu\.be)/i.test(rec.externalUrl));
+}
+
+/**
+ * Selects the optimal recording according to the user's sticky `audio` (Data Saver) vs `video`
+ * preference while falling back gracefully for audio-only (e.g. Sai Rhythms) or YouTube-only bhajans.
+ */
+export function pickStreamRecording(
+  bhajan: Bhajan | null | undefined,
+  mediaMode: StreamMediaMode,
+): {
+  recording: RecordingSource | null;
+  hasAudioOption: boolean;
+  hasVideoOption: boolean;
+} {
+  const recs = bhajan?.recordings ?? [];
+  if (recs.length === 0) {
+    return { recording: null, hasAudioOption: false, hasVideoOption: false };
+  }
+
+  const directAudio = recs.find(isDirectAudioRecording) ?? null;
+  const embeddableYt =
+    recs.find((r) => isYouTubeRecording(r) && r.embeddable !== false) ?? null;
+  const anyYt = embeddableYt ?? recs.find(isYouTubeRecording) ?? null;
+
+  const preferred =
+    mediaMode === 'video'
+      ? anyYt ?? directAudio ?? recs[0]
+      : directAudio ?? anyYt ?? recs[0];
+
+  return {
+    recording: preferred,
+    hasAudioOption: Boolean(directAudio),
+    hasVideoOption: Boolean(anyYt),
+  };
 }

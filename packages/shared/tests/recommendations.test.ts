@@ -1,11 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { BhajanIndexEntry } from '../src/types';
+import type { Bhajan, BhajanIndexEntry } from '../src/types';
 import {
   buildStreamQueue,
   computeSimilarBhajans,
   groupRecommendationsByRaga,
   normalizeRagaKey,
+  pickStreamRecording,
 } from '../src/recommendations';
 
 const SAMPLE_ENTRIES: BhajanIndexEntry[] = [
@@ -141,5 +142,48 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
       likedOnly.map((e) => e.id),
       ['sundara-sundara-vinayaka'],
     );
+  });
+
+  it('prefers direct audio in audio mode and YouTube in video mode with graceful fallback', () => {
+    const dualBhajan = {
+      id: 'dual-1',
+      recordings: [
+        {
+          id: 'yt_abc',
+          label: 'YouTube Recording',
+          collection: 'youtube_prasanthi_mandir_live',
+          youtubeVideoId: 'abc123XYZ',
+          embeddable: true,
+        },
+        {
+          id: 'mp3_1',
+          label: 'Sai Rhythms Audio',
+          collection: 'sairhythms_ref',
+          externalUrl: 'https://sairhythms.sathyasai.org/audio/sample.mp3',
+        },
+      ],
+    } as unknown as Bhajan;
+
+    const audioPick = pickStreamRecording(dualBhajan, 'audio');
+    assert.equal(audioPick.recording?.id, 'mp3_1');
+    assert.equal(audioPick.hasAudioOption, true);
+    assert.equal(audioPick.hasVideoOption, true);
+
+    const videoPick = pickStreamRecording(dualBhajan, 'video');
+    assert.equal(videoPick.recording?.id, 'yt_abc');
+
+    const audioOnlyBhajan = {
+      id: 'audio-only',
+      recordings: [dualBhajan.recordings[1]],
+    } as unknown as Bhajan;
+    assert.equal(pickStreamRecording(audioOnlyBhajan, 'video').recording?.id, 'mp3_1');
+    assert.equal(pickStreamRecording(audioOnlyBhajan, 'video').hasVideoOption, false);
+
+    const ytOnlyBhajan = {
+      id: 'yt-only',
+      recordings: [dualBhajan.recordings[0]],
+    } as unknown as Bhajan;
+    assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').recording?.id, 'yt_abc');
+    assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').hasAudioOption, false);
   });
 });

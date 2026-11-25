@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { StreamMediaMode } from '@bhajami/shared';
+
+export interface YouTubeSegmentPlayerHandle {
+  play: () => void;
+  pause: () => void;
+  togglePlay: () => void;
+}
 
 export interface YouTubeSegmentPlayerProps {
   videoId: string;
@@ -10,13 +17,21 @@ export interface YouTubeSegmentPlayerProps {
   embeddable?: boolean;
   playbackRate?: number;
   autoPlay?: boolean;
+  mediaMode?: StreamMediaMode;
+  onMediaModeChange?: (next: StreamMediaMode) => void;
+  minimized?: boolean;
   onEnded?: () => void;
+  onPlayStateChange?: (playing: boolean) => void;
 }
 
 interface YTPlayerInstance {
   destroy: () => void;
+  playVideo?: () => void;
+  pauseVideo?: () => void;
+  getPlayerState?: () => number;
   setPlaybackRate: (suggestedRate: number) => void;
   getAvailablePlaybackRates: () => number[];
+  setPlaybackQuality?: (suggestedQuality: string) => void;
 }
 
 interface YTPlayerEvent {
@@ -115,30 +130,78 @@ function formatSecLabel(sec?: number): string {
 
 /**
  * Visible TOS-compliant YouTube IFrame player supporting chapter `startSec`/`endSec`
- * bounds, playback rate snapping, and an external fallback link when embedding is disabled.
+ * bounds, playback rate snapping, sticky Audio Saver (`vq=small`) vs Video quality hint,
+ * imperative play/pause control, and an external fallback link when embedding is disabled.
  */
-export function YouTubeSegmentPlayer({
-  videoId,
-  title,
-  startSec,
-  endSec,
-  embeddable = true,
-  playbackRate = 1.0,
-  autoPlay = false,
-  onEnded,
-}: YouTubeSegmentPlayerProps) {
+export const YouTubeSegmentPlayer = forwardRef<
+  YouTubeSegmentPlayerHandle,
+  YouTubeSegmentPlayerProps
+>(function YouTubeSegmentPlayer(
+  {
+    videoId,
+    title,
+    startSec,
+    endSec,
+    embeddable = true,
+    playbackRate = 1.0,
+    autoPlay = false,
+    mediaMode = 'video',
+    onMediaModeChange,
+    minimized = false,
+    onEnded,
+    onPlayStateChange,
+  },
+  ref,
+) {
   const hostId = useId();
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayerInstance | null>(null);
   const playbackRateRef = useRef(playbackRate);
   playbackRateRef.current = playbackRate;
+  const mediaModeRef = useRef(mediaMode);
+  mediaModeRef.current = mediaMode;
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+  const onPlayStateChangeRef = useRef(onPlayStateChange);
+  onPlayStateChangeRef.current = onPlayStateChange;
   const autoPlayRef = useRef(autoPlay);
   autoPlayRef.current = autoPlay;
 
   const [embedBlocked, setEmbedBlocked] = useState(embeddable === false);
   const [appliedRate, setAppliedRate] = useState(1.0);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: () => {
+        try {
+          playerRef.current?.playVideo?.();
+        } catch {
+          // ignore
+        }
+      },
+      pause: () => {
+        try {
+          playerRef.current?.pauseVideo?.();
+        } catch {
+          // ignore
+        }
+      },
+      togglePlay: () => {
+        try {
+          const st = playerRef.current?.getPlayerState?.();
+          if (st === 1 || st === 3) {
+            playerRef.current?.pauseVideo?.();
+          } else {
+            playerRef.current?.playVideo?.();
+          }
+        } catch {
+          // ignore
+        }
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     setEmbedBlocked(embeddable === false);
@@ -175,6 +238,9 @@ export function YouTubeSegmentPlayer({
         playsinline: 1,
         autoplay: autoPlayRef.current ? 1 : 0,
       };
+      if (mediaModeRef.current === 'audio') {
+        playerVars.vq = 'small';
+      }
       if (typeof startSec === 'number' && startSec > 0) {
         playerVars.start = Math.floor(startSec);
       }
@@ -194,13 +260,25 @@ export function YouTubeSegmentPlayer({
             const snapped = snapPlaybackRate(playbackRateRef.current, rates);
             try {
               ev.target.setPlaybackRate(snapped);
+              if (mediaModeRef.current === 'audio') {
+                ev.target.setPlaybackQuality?.('small');
+              }
+              if (autoPlayRef.current) {
+                ev.target.playVideo?.();
+              }
             } catch {
-              // ignore unsupported rate error on live streams
+              // ignore unsupported controls on live streams
             }
             setAppliedRate(snapped);
           },
           onStateChange: (ev) => {
-            if (!cancelled && ev.data === 0) {
+            if (cancelled) return;
+            if (ev.data === 1) {
+              onPlayStateChangeRef.current?.(true);
+            } else if (ev.data === 2) {
+              onPlayStateChangeRef.current?.(false);
+            } else if (ev.data === 0) {
+              onPlayStateChangeRef.current?.(false);
               onEndedRef.current?.();
             }
           },
@@ -229,6 +307,16 @@ export function YouTubeSegmentPlayer({
       }
     };
   }, [embedBlocked, endSec, hostId, startSec, videoId]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player || embedBlocked) return;
+    try {
+      player.setPlaybackQuality?.(mediaMode === 'audio' ? 'small' : 'default');
+    } catch {
+      // ignore
+    }
+  }, [embedBlocked, mediaMode]);
 
   useEffect(() => {
     const player = playerRef.current;
@@ -267,20 +355,43 @@ export function YouTubeSegmentPlayer({
       : null;
 
   return (
-    <div className="yt-player-shell">
+    <div
+      className={`yt-player-shell${
+        mediaMode === 'audio' && !minimized ? ' yt-player-shell--compact' : ''
+      }${minimized ? ' yt-player-shell--minimized' : ''}`}
+    >
       <div
         ref={hostRef}
         className="yt-player-frame"
         aria-label={`YouTube player for ${title}`}
       />
-      <div className="yt-player-meta">
-        <span>
-          {chapterSpan ? `${chapterSpan} · ` : ''}YouTube Speed: {appliedRate.toFixed(2)}x
-        </span>
-        <a href={watchUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontWeight: 600 }}>
-          Watch on YouTube
-        </a>
-      </div>
+      {!minimized && (
+        <div className="yt-player-meta">
+          <span>
+            {chapterSpan ? `${chapterSpan} · ` : ''}
+            {mediaMode === 'audio' ? 'Data Saver' : 'Video'} · Speed: {appliedRate.toFixed(2)}x
+          </span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            {onMediaModeChange && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
+              >
+                {mediaMode === 'audio' ? 'Switch to Video' : 'Audio Saver'}
+              </button>
+            )}
+            <a
+              href={watchUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--accent)', fontWeight: 600 }}
+            >
+              Watch on YouTube
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+});

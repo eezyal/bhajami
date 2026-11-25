@@ -19,6 +19,7 @@ import {
   type CatalogStats,
   type LyricCorrection,
   type MissingFieldKey,
+  type StreamMediaMode,
   type StreamModeKind,
   type SubmissionType,
 } from '@bhajami/shared';
@@ -140,9 +141,37 @@ export function JamStudioClient({
   );
   const [streamIdx, setStreamIdx] = useState(0);
   const [streamAutoPlay, setStreamAutoPlay] = useState(true);
+  const [streamSessionActive, setStreamSessionActive] = useState(false);
+  const [streamMediaMode, setStreamMediaMode] = useState<StreamMediaMode>('audio');
   const [streamLoadingDetail, setStreamLoadingDetail] = useState(false);
   const [likedRagaFilter, setLikedRagaFilter] = useState<string>('');
   const [homeQuery, setHomeQuery] = useState('');
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem('bhajami_stream_media_mode_v1');
+      if (saved === 'audio' || saved === 'video') {
+        setStreamMediaMode(saved);
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeView === 'stream') {
+      setStreamSessionActive(true);
+    }
+  }, [activeView]);
+
+  const handleStreamMediaModeChange = useCallback((next: StreamMediaMode) => {
+    setStreamMediaMode(next);
+    try {
+      window.localStorage.setItem('bhajami_stream_media_mode_v1', next);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Persist Firebase client authentication across reloads
   useEffect(() => {
@@ -416,7 +445,11 @@ export function JamStudioClient({
   const activeStreamBhajan = activeStreamEntry ? bhajanCache[activeStreamEntry.id] || null : null;
 
   useEffect(() => {
-    if (activeView !== 'stream' || !activeStreamEntry?.id || bhajanCache[activeStreamEntry.id]) {
+    if (
+      (activeView !== 'stream' && !streamSessionActive) ||
+      !activeStreamEntry?.id ||
+      bhajanCache[activeStreamEntry.id]
+    ) {
       setStreamLoadingDetail(false);
       return;
     }
@@ -441,7 +474,7 @@ export function JamStudioClient({
       cancelled = true;
       controller.abort();
     };
-  }, [activeStreamEntry?.id, activeView, bhajanCache, fetchAndCacheBhajanDetail]);
+  }, [activeStreamEntry?.id, activeView, bhajanCache, fetchAndCacheBhajanDetail, streamSessionActive]);
 
   const handleRetryStreamDetail = useCallback(() => {
     const id = activeStreamEntry?.id;
@@ -825,7 +858,13 @@ export function JamStudioClient({
         </div>
       </header>
 
-      <main className="portal-shell app-stage">
+      <main
+        className={`portal-shell app-stage${
+          streamSessionActive && activeView !== 'stream' && activeStreamEntry
+            ? ' has-mini-stream'
+            : ''
+        }`}
+      >
         <div className="stats-strip">
           <span className="badge">Total Bhajans: {catalogIndex.stats.totalBhajans}</span>
           <span className="badge badge-verified">
@@ -1116,8 +1155,11 @@ export function JamStudioClient({
           </div>
         )}
 
-        {activeView === 'stream' && (
+        {(activeView === 'stream' || (streamSessionActive && Boolean(activeStreamEntry))) && (
           <StreamRadioView
+            minimized={activeView !== 'stream'}
+            mediaMode={streamMediaMode}
+            onMediaModeChange={handleStreamMediaModeChange}
             mode={streamMode}
             onModeChange={(next) => setStreamMode(next)}
             deityFilter={streamDeity}
@@ -1146,6 +1188,8 @@ export function JamStudioClient({
             onOpenInStudio={openEntryInStudio}
             onPlayEntry={playEntryInStream}
             onRetryDetail={handleRetryStreamDetail}
+            onExpand={() => setActiveView('stream')}
+            onDismiss={() => setStreamSessionActive(false)}
             similarRecs={similarRecs}
           />
         )}
