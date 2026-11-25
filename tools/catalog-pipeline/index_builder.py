@@ -30,6 +30,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import crawl_sairhythms as crawler  # noqa: E402
 import phonetics  # noqa: E402
+import sync_youtube as yt_sync  # noqa: E402
 
 MAX_SHARD_BYTES = 345_000
 DEFAULT_CATALOG_JSON = SHARED_DATA_DIR / "catalog.json"
@@ -62,18 +63,6 @@ def _extract_title_from_recording_label(label: str) -> str:
     return clean
 
 
-def _resolve_title(bhajan: Mapping[str, Any]) -> str:
-    title = str(bhajan.get("title") or "").strip()
-    if title:
-        return title
-    for rec in list(bhajan.get("recordings") or []) + list(bhajan.get("addedRecordings") or []):
-        candidate = _extract_title_from_recording_label(str(rec.get("label") or ""))
-        if candidate:
-            return candidate
-    slug = str(bhajan.get("slug") or bhajan.get("id") or "").strip()
-    return re.sub(r"[-_]+", " ", slug).strip().title()
-
-
 def _resolve_metadata_source(bhajan: Mapping[str, Any]) -> str:
     explicit = str(bhajan.get("metadataSource") or "").strip()
     if explicit:
@@ -87,13 +76,27 @@ def _resolve_metadata_source(bhajan: Mapping[str, Any]) -> str:
     return "community_contributed"
 
 
+def _resolve_title(bhajan: Mapping[str, Any], *, metadata_source: str = "") -> str:
+    is_yt = metadata_source.startswith("youtube") or bool(str(bhajan.get("youtubeId") or "").strip())
+    title = str(bhajan.get("title") or "").strip()
+    if title:
+        return (yt_sync.clean_youtube_display_title(title) or title) if is_yt else title
+    for rec in list(bhajan.get("recordings") or []) + list(bhajan.get("addedRecordings") or []):
+        candidate = _extract_title_from_recording_label(str(rec.get("label") or ""))
+        if candidate:
+            return (yt_sync.clean_youtube_display_title(candidate) or candidate) if is_yt else candidate
+    slug = str(bhajan.get("slug") or bhajan.get("id") or "").strip()
+    return re.sub(r"[-_]+", " ", slug).strip().title()
+
+
 def project_bhajan_to_index_entry(
     bhajan: Mapping[str, Any],
     *,
     entity_aliases: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project a full Bhajan record into a compact `BhajanIndexEntry` for client search."""
-    title = _resolve_title(bhajan)
+    metadata_source = _resolve_metadata_source(bhajan)
+    title = _resolve_title(bhajan, metadata_source=metadata_source)
     deity = str(bhajan.get("deity") or "").strip() or (crawler.infer_deity(title) if title else "")
     language = str(bhajan.get("language") or "").strip()
     raga_obj = bhajan.get("raga") or {}
@@ -102,7 +105,11 @@ def project_bhajan_to_index_entry(
     gents_raw = str((bhajan.get("gentsPitch") or {}).get("raw") or bhajan.get("gentsPitchRaw") or "").strip()
     ladies_raw = str((bhajan.get("ladiesPitch") or {}).get("raw") or bhajan.get("ladiesPitchRaw") or "").strip()
 
-    lyrics_sets = bhajan.get("lyricsSets") or []
+    lyrics_sets = list(bhajan.get("lyricsSets") or [])
+    if not lyrics_sets and isinstance(bhajan.get("lyrics"), str) and bhajan["lyrics"].strip():
+        lines = [ln.strip() for ln in bhajan["lyrics"].splitlines() if ln.strip()]
+        if lines:
+            lyrics_sets = [{"language": "Roman", "script": crawler.infer_script_kind(lines, "Roman"), "lines": lines}]
     first_two_lines: list[str] = []
     for lset in lyrics_sets:
         lines = [str(ln).strip() for ln in (lset.get("lines") or []) if str(ln).strip()]
@@ -125,8 +132,13 @@ def project_bhajan_to_index_entry(
                 seen_tokens.add(word)
                 token_set.append(word)
 
-    missing_fields = list(bhajan.get("missingFields") or crawler.compute_missing_bhajan_fields(bhajan))
-    lyrics_missing = bool(bhajan.get("lyricsMissing")) or ("lyrics" in missing_fields)
+    normalized_for_missing = bhajan if lyrics_sets == (bhajan.get("lyricsSets") or []) else {**bhajan, "lyricsSets": lyrics_sets, "lyricsMissing": False}
+    if bhajan.get("missingFields") and lyrics_sets == (bhajan.get("lyricsSets") or []):
+        missing_fields = list(bhajan["missingFields"])
+        lyrics_missing = bool(bhajan.get("lyricsMissing")) or ("lyrics" in missing_fields)
+    else:
+        missing_fields = crawler.compute_missing_bhajan_fields(normalized_for_missing)
+        lyrics_missing = ("lyrics" in missing_fields)
 
     recording_count = len(bhajan.get("recordings") or []) + len(bhajan.get("addedRecordings") or [])
     if recording_count == 0 and str(bhajan.get("youtubeId") or "").strip():
@@ -142,7 +154,7 @@ def project_bhajan_to_index_entry(
         "matchStatus": str(bhajan.get("matchStatus") or "verified"),
         "missingFields": missing_fields,
         "recordingCount": recording_count,
-        "metadataSource": _resolve_metadata_source(bhajan),
+        "metadataSource": metadata_source,
     }
     if deity:
         entry["deity"] = deity

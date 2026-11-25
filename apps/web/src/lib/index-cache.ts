@@ -51,8 +51,29 @@ export async function getCachedCatalogIndex(): Promise<CatalogIndexPayload | nul
   });
 }
 
+export async function clearCachedBhajans(): Promise<void> {
+  memBhajans.clear();
+  const db = await openDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(STORE_BHAJANS, 'readwrite');
+      tx.objectStore(STORE_BHAJANS).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
 export async function setCachedCatalogIndex(payload: CatalogIndexPayload): Promise<void> {
+  const prevVersion = memIndex?.version ?? (await getCachedCatalogIndex())?.version;
   memIndex = payload;
+  if (typeof prevVersion === 'number' && prevVersion !== payload.version) {
+    await clearCachedBhajans();
+  }
   const db = await openDb();
   if (!db) return;
   await new Promise<void>((resolve) => {

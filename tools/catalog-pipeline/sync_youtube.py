@@ -224,6 +224,19 @@ def parse_description_chapters(
     return non_structural, all_markers
 
 
+def clean_youtube_display_title(raw_title: str) -> str:
+    """Produce a clean UI bhajan title by stripping leading numbers and pipe/tag suffixes."""
+    sanitized = phonetics.sanitize_title(raw_title or "")
+    candidate = sanitized or str(raw_title or "").strip()
+    if "|" in candidate:
+        head = candidate.split("|", 1)[0].strip()
+        if len(head) >= 3:
+            candidate = head
+    candidate = re.sub(r"^\s*\d{1,5}\s*[-–—:.|)]\s*", "", candidate)
+    candidate = re.sub(r"^[\s|–—-]+|[\s|–—-]+$", "", candidate)
+    return re.sub(r"\s+", " ", candidate).strip()
+
+
 def classify_youtube_video(
     raw_title: str,
     raw_description: str,
@@ -239,12 +252,16 @@ def classify_youtube_video(
     else:
         classification = "single"
 
-    cleaned_title = phonetics.sanitize_title(raw_title or "") or (raw_title or "").strip()
+    cleaned_title = clean_youtube_display_title(raw_title or "") or (raw_title or "").strip()
     return {
         "classification": classification,
         "cleanedTitle": cleaned_title,
         "chapters": [
-            {"title": c["title"], "startSec": int(c["startSec"]), "endSec": int(c["endSec"])}
+            {
+                "title": clean_youtube_display_title(c["title"]) or c["title"],
+                "startSec": int(c["startSec"]),
+                "endSec": int(c["endSec"]),
+            }
             for c in non_structural
         ],
         "allMarkers": all_markers,

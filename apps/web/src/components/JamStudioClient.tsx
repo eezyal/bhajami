@@ -443,6 +443,15 @@ export function JamStudioClient({
     };
   }, [activeStreamEntry?.id, activeView, bhajanCache, fetchAndCacheBhajanDetail]);
 
+  const handleRetryStreamDetail = useCallback(() => {
+    const id = activeStreamEntry?.id;
+    if (!id) return;
+    setStreamLoadingDetail(true);
+    void fetchAndCacheBhajanDetail(id).finally(() => {
+      setStreamLoadingDetail(false);
+    });
+  }, [activeStreamEntry?.id, fetchAndCacheBhajanDetail]);
+
   const handleToggleLike = useCallback(
     (bhajanId: string) => {
       setLikedIds((prev) => {
@@ -1136,6 +1145,7 @@ export function JamStudioClient({
             onSelectQueueIndex={(idx) => setStreamIdx(idx)}
             onOpenInStudio={openEntryInStudio}
             onPlayEntry={playEntryInStream}
+            onRetryDetail={handleRetryStreamDetail}
             similarRecs={similarRecs}
           />
         )}

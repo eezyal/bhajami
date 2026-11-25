@@ -33,6 +33,7 @@ interface StreamRadioViewProps {
   onSelectQueueIndex: (idx: number) => void;
   onOpenInStudio: (bhajanId: string) => void;
   onPlayEntry: (entry: BhajanIndexEntry) => void;
+  onRetryDetail?: () => void;
   similarRecs: BhajanRecommendation[];
 }
 
@@ -70,6 +71,7 @@ export function StreamRadioView({
   onSelectQueueIndex,
   onOpenInStudio,
   onPlayEntry,
+  onRetryDetail,
   similarRecs,
 }: StreamRadioViewProps) {
   const activeRec = pickPlayableRecording(currentBhajan);
@@ -266,6 +268,15 @@ export function StreamRadioView({
                 src={audioUrl}
                 style={{ width: '100%' }}
               />
+            ) : currentBhajan === null && onRetryDetail ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem' }}>
+                <p className="field-hint" style={{ margin: 0 }}>
+                  Could not load audio and lyrics for this bhajan right now.
+                </p>
+                <button type="button" className="btn btn-sm" onClick={onRetryDetail}>
+                  Retry
+                </button>
+              </div>
             ) : (
               <p className="field-hint" style={{ margin: 0 }}>
                 No playable audio source is linked to this bhajan yet — click Next or Open in Studio.

@@ -229,6 +229,56 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         self.assertEqual(matched["slug"], "sundara-sundara-vinayaka")
         self.assertEqual(matched["metadataSource"], "youtube_sss_bhajans")
 
+    def test_clean_youtube_display_title_and_legacy_doc_normalization(self) -> None:
+        import index_builder
+        import normalize_legacy_youtube_docs as norm
+
+        self.assertEqual(
+            yt.clean_youtube_display_title("01 - Hari Bhajan Bina Sukh Shanti Nahin | Sri Sathya Sai Bhajans"),
+            "Hari Bhajan Bina Sukh Shanti Nahin",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("160 - Shankara Shankara Sada Shiva | Radio Sai Bhajans"),
+            "Shankara Shankara Sada Shiva",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("1022 - Shaila Gireeshwara Uma Maheshwara | Baba Sings | In His Divine Voice | Sri Sathya Sai Bhajans"),
+            "Shaila Gireeshwara Uma Maheshwara",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("Kurai Ondrum Illai | Devotional Song | Mystik Vibes | Sai Kulwant Hall"),
+            "Kurai Ondrum Illai",
+        )
+
+        legacy_raw = {
+            "title": "160 - Shankara Shankara Sada Shiva | Radio Sai Bhajans",
+            "youtubeId": "ter5U3IX-Zw",
+            "lyrics": "Shankara Shankara Sada Shiva\nSada Shiva Hey Samba Shiva",
+            "source": "youtube",
+            "deity": "Shiva",
+        }
+        migrated = norm.normalize_bhajan_doc("VoS2fSSmJ8FPBaoJgE7j", legacy_raw, now_iso="2026-11-25T15:55:00Z")
+        self.assertIsNotNone(migrated)
+        assert migrated is not None
+        self.assertEqual(migrated["id"], "VoS2fSSmJ8FPBaoJgE7j")
+        self.assertEqual(migrated["slug"], "VoS2fSSmJ8FPBaoJgE7j")
+        self.assertEqual(migrated["title"], "Shankara Shankara Sada Shiva")
+        self.assertEqual(migrated["metadataSource"], "youtube_sss_bhajans")
+        self.assertFalse(migrated["lyricsMissing"])
+        self.assertEqual(len(migrated["lyricsSets"][0]["lines"]), 2)
+        self.assertEqual(migrated["recordings"][0]["youtubeVideoId"], "ter5U3IX-Zw")
+        self.assertTrue(migrated["recordings"][0]["embeddable"])
+        self.assertIsNone(norm.normalize_bhajan_doc("VoS2fSSmJ8FPBaoJgE7j", migrated, now_iso="2026-11-25T15:56:00Z"))
+
+        override_doc = {**legacy_raw, "bhajamiOverride": True}
+        self.assertIsNone(norm.normalize_bhajan_doc("VoS2fSSmJ8FPBaoJgE7j", override_doc, now_iso="2026-11-25T15:56:00Z"))
+
+        projected = index_builder.project_bhajan_to_index_entry(
+            index_builder._hydrate_firestore_bhajan_doc("VoS2fSSmJ8FPBaoJgE7j", legacy_raw)
+        )
+        self.assertEqual(projected["title"], "Shankara Shankara Sada Shiva")
+        self.assertFalse(projected["lyricsMissing"])
+
 
 if __name__ == "__main__":
     unittest.main()

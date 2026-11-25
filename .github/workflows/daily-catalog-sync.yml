@@ -15,6 +15,11 @@ on:
         required: false
         default: false
         type: boolean
+      normalize_legacy_youtube:
+        description: 'Retroactively normalize legacy YouTube titles, lyricsSets, and embeddable recordings in Firestore'
+        required: false
+        default: false
+        type: boolean
       run_youtube:
         description: 'Run YouTube sync after Sai Rhythms (recommended after initial Sai Rhythms backfill finishes)'
         required: false
@@ -76,6 +81,7 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           MAX_SONGS: ${{ inputs.max_songs_per_run || '300' }}
           SKIP_SAIRHYTHMS: ${{ inputs.skip_sairhythms || 'false' }}
+          NORMALIZE_LEGACY_YT: ${{ inputs.normalize_legacy_youtube || 'false' }}
           RUN_YOUTUBE: ${{ inputs.run_youtube || 'false' }}
           MAX_YT_VIDEOS: ${{ inputs.max_youtube_videos || '200' }}
         run: |
@@ -120,6 +126,13 @@ jobs:
               --max-firestore-writes 4000
           else
             echo "YouTube step skipped (run_youtube=${RUN_YOUTUBE}; Sai Rhythms backfill takes priority)."
+          fi
+
+          if [ "$NORMALIZE_LEGACY_YT" = "true" ]; then
+            echo "Running retroactive legacy YouTube document normalization..."
+            python3 tools/catalog-pipeline/normalize_legacy_youtube_docs.py \
+              --publish-firestore \
+              --max-firestore-writes 4000
           fi
 
           echo "Rebuilding bounded Firestore search shards and catalogMeta/latest..."

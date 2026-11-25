@@ -492,7 +492,22 @@ export function parseBhajanRecord(bhajanId: string, fields: Record<string, unkno
         .trim()
     : '';
   const slugDerivedTitle = bhajanId.replace(/[-_]+/g, ' ').trim();
-  const resolvedTitle = rawTitle || labelDerivedTitle || slugDerivedTitle;
+  const isLegacyOrYouTube =
+    typeof fields.youtubeId === 'string' ||
+    String(fields.source || '').toLowerCase() === 'youtube' ||
+    String(fields.metadataSource || '').startsWith('youtube');
+  let resolvedTitle = rawTitle || labelDerivedTitle || slugDerivedTitle;
+  if (isLegacyOrYouTube && resolvedTitle) {
+    const cleanedDisplay = resolvedTitle
+      .replace(/^\s*\d{1,5}\s*[-–—:.|)]\s*/, '')
+      .split('|')[0]
+      .replace(/^[\s|–—-]+|[\s|–—-]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (cleanedDisplay.length >= 3) {
+      resolvedTitle = cleanedDisplay;
+    }
+  }
 
   const legacyYtId = typeof fields.youtubeId === 'string' ? fields.youtubeId.trim() : '';
   const mergedBaseRecordings: RecordingSource[] =
