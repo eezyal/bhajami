@@ -52,14 +52,49 @@ def _clean_search_snippet(text: str, max_len: int = 240) -> str:
     return collapsed[:max_len].strip()
 
 
+def _extract_title_from_recording_label(label: str) -> str:
+    clean = str(label or "").strip()
+    if not clean:
+        return ""
+    if ": " in clean:
+        clean = clean.split(": ", 1)[1].strip()
+    clean = re.sub(r"\s*\(\d{1,2}:\d{2}(?::\d{2})?[–-]\d{1,2}:\d{2}(?::\d{2})?\)\s*$", "", clean).strip()
+    return clean
+
+
+def _resolve_title(bhajan: Mapping[str, Any]) -> str:
+    title = str(bhajan.get("title") or "").strip()
+    if title:
+        return title
+    for rec in list(bhajan.get("recordings") or []) + list(bhajan.get("addedRecordings") or []):
+        candidate = _extract_title_from_recording_label(str(rec.get("label") or ""))
+        if candidate:
+            return candidate
+    slug = str(bhajan.get("slug") or bhajan.get("id") or "").strip()
+    return re.sub(r"[-_]+", " ", slug).strip().title()
+
+
+def _resolve_metadata_source(bhajan: Mapping[str, Any]) -> str:
+    explicit = str(bhajan.get("metadataSource") or "").strip()
+    if explicit:
+        return explicit
+    for rec in list(bhajan.get("recordings") or []) + list(bhajan.get("addedRecordings") or []):
+        coll = str(rec.get("collection") or "").strip()
+        if coll.startswith("youtube_"):
+            return coll
+    if str(bhajan.get("youtubeId") or "").strip():
+        return "youtube_channel"
+    return "community_contributed"
+
+
 def project_bhajan_to_index_entry(
     bhajan: Mapping[str, Any],
     *,
     entity_aliases: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project a full Bhajan record into a compact `BhajanIndexEntry` for client search."""
-    title = str(bhajan.get("title") or "").strip()
-    deity = str(bhajan.get("deity") or "").strip()
+    title = _resolve_title(bhajan)
+    deity = str(bhajan.get("deity") or "").strip() or (crawler.infer_deity(title) if title else "")
     language = str(bhajan.get("language") or "").strip()
     raga_obj = bhajan.get("raga") or {}
     raga_name = str(raga_obj.get("name") or "").strip()
@@ -93,6 +128,10 @@ def project_bhajan_to_index_entry(
     missing_fields = list(bhajan.get("missingFields") or crawler.compute_missing_bhajan_fields(bhajan))
     lyrics_missing = bool(bhajan.get("lyricsMissing")) or ("lyrics" in missing_fields)
 
+    recording_count = len(bhajan.get("recordings") or []) + len(bhajan.get("addedRecordings") or [])
+    if recording_count == 0 and str(bhajan.get("youtubeId") or "").strip():
+        recording_count = 1
+
     entry: dict[str, Any] = {
         "id": str(bhajan.get("id") or bhajan.get("slug") or ""),
         "slug": str(bhajan.get("slug") or bhajan.get("id") or ""),
@@ -102,8 +141,8 @@ def project_bhajan_to_index_entry(
         "lyricsMissing": lyrics_missing,
         "matchStatus": str(bhajan.get("matchStatus") or "verified"),
         "missingFields": missing_fields,
-        "recordingCount": len(bhajan.get("recordings") or []) + len(bhajan.get("addedRecordings") or []),
-        "metadataSource": str(bhajan.get("metadataSource") or "sairhythms_verified"),
+        "recordingCount": recording_count,
+        "metadataSource": _resolve_metadata_source(bhajan),
     }
     if deity:
         entry["deity"] = deity
@@ -143,16 +182,19 @@ def compute_catalog_stats(bhajans: Iterable[Mapping[str, Any]]) -> dict[str, Any
             missing_lyrics += 1
         if item.get("matchStatus") == "needs_verification":
             needs_verification += 1
-        for rec in list(item.get("recordings") or []) + list(item.get("addedRecordings") or []):
-            coll = rec.get("collection")
+        recs = list(item.get("recordings") or []) + list(item.get("addedRecordings") or [])
+        for rec in recs:
+            coll = str(rec.get("collection") or "")
             if coll == "sssmediacentre_bhajan_a_day":
                 bhajan_downloader += 1
                 total_local += 1
             elif coll == "ravimp3_archive":
                 ravi_mp3 += 1
                 total_local += 1
-            elif coll == "youtube_channel":
+            elif coll.startswith("youtube"):
                 youtube_count += 1
+        if not recs and str(item.get("youtubeId") or "").strip():
+            youtube_count += 1
 
     return {
         "totalBhajans": len(items),

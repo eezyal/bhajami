@@ -484,11 +484,54 @@ export function parseBhajanRecord(bhajanId: string, fields: Record<string, unkno
   const addedRecs = Array.isArray(fields.addedRecordings)
     ? (fields.addedRecordings as RecordingSource[])
     : [];
+  const rawTitle = typeof fields.title === 'string' ? fields.title.trim() : '';
+  const firstRecLabel = String(baseRecordings[0]?.label || addedRecs[0]?.label || '').trim();
+  const labelDerivedTitle = firstRecLabel
+    ? (firstRecLabel.includes(': ') ? firstRecLabel.split(': ').slice(1).join(': ') : firstRecLabel)
+        .replace(/\s*\(\d{1,2}:\d{2}(?::\d{2})?[–-]\d{1,2}:\d{2}(?::\d{2})?\)\s*$/, '')
+        .trim()
+    : '';
+  const slugDerivedTitle = bhajanId.replace(/[-_]+/g, ' ').trim();
+  const resolvedTitle = rawTitle || labelDerivedTitle || slugDerivedTitle;
+
+  const legacyYtId = typeof fields.youtubeId === 'string' ? fields.youtubeId.trim() : '';
+  const mergedBaseRecordings: RecordingSource[] =
+    baseRecordings.length > 0
+      ? baseRecordings
+      : legacyYtId
+        ? [
+            {
+              id: `yt_${legacyYtId}`,
+              label: resolvedTitle,
+              collection: 'youtube_sss_bhajans',
+              externalUrl: `https://www.youtube.com/watch?v=${legacyYtId}`,
+              youtubeVideoId: legacyYtId,
+              embeddable: true,
+            },
+          ]
+        : [];
+
+  const rawLyricsSets = Array.isArray(fields.lyricsSets)
+    ? (fields.lyricsSets as Bhajan['lyricsSets'])
+    : [];
+  const legacyLyrics =
+    rawLyricsSets.length === 0 && typeof fields.lyrics === 'string' && fields.lyrics.trim()
+      ? [
+          {
+            language: 'Roman',
+            script: 'roman' as const,
+            lines: fields.lyrics
+              .split(/\r?\n/)
+              .map((ln) => ln.trim())
+              .filter(Boolean),
+          },
+        ]
+      : rawLyricsSets;
 
   return {
     id: bhajanId,
     slug: typeof fields.slug === 'string' ? fields.slug : bhajanId,
-    title: typeof fields.title === 'string' ? fields.title : bhajanId,
+    title: resolvedTitle,
     deity: typeof fields.deity === 'string' ? fields.deity : null,
     language: typeof fields.language === 'string' ? fields.language : null,
     raga,
@@ -506,9 +549,9 @@ export function parseBhajanRecord(bhajanId: string, fields: Record<string, unkno
     firstLineNotes: rawNotes,
     notesRange: typeof fields.notesRange === 'string' ? fields.notesRange : null,
     meaning: typeof fields.meaning === 'string' ? fields.meaning : null,
-    lyricsSets: Array.isArray(fields.lyricsSets) ? (fields.lyricsSets as Bhajan['lyricsSets']) : [],
+    lyricsSets: legacyLyrics,
     glossary: Array.isArray(fields.glossary) ? (fields.glossary as Bhajan['glossary']) : [],
-    recordings: mergeRecordingArrays(baseRecordings, addedRecs),
+    recordings: mergeRecordingArrays(mergedBaseRecordings, addedRecs),
     addedRecordings: addedRecs.length ? addedRecs : undefined,
     sheetMusicUrl: typeof fields.sheetMusicUrl === 'string' ? fields.sheetMusicUrl : null,
     sourceUrl: typeof fields.sourceUrl === 'string' ? fields.sourceUrl : null,

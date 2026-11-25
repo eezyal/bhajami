@@ -609,6 +609,12 @@ a:focus-visible {
   .portal-grid {
     grid-template-columns: 1fr;
   }
+  .studio-stack {
+    order: -1;
+  }
+  .catalog-sidebar {
+    max-height: 460px;
+  }
 }
 
 .card {
@@ -623,6 +629,15 @@ a:focus-visible {
   flex-direction: column;
   gap: 0.75rem;
   max-height: calc(100vh - 130px);
+}
+
+.catalog-sidebar > * {
+  flex-shrink: 0;
+}
+
+.catalog-sidebar > .song-list {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .chip-row {
@@ -661,6 +676,7 @@ a:focus-visible {
 
 .song-item {
   width: 100%;
+  flex-shrink: 0;
   text-align: left;
   padding: 0.68rem 0.78rem;
   border-radius: 12px;

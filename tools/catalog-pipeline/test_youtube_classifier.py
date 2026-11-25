@@ -179,6 +179,52 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         self.assertLessEqual(len(shortlisted), 30)
         self.assertTrue(any(c["id"] == "panduranga-vitthala" for c in shortlisted))
 
+    def test_stub_title_and_metadata_source_resolution(self) -> None:
+        import index_builder
+
+        stub = {
+            "id": "allah-eshwar-ek-hi-nam",
+            "recordings": [
+                {
+                    "id": "yt_nwTjUoNC54M",
+                    "label": "Prasanthi Mandir Live: Allah Eshwar Ek Hi Nam",
+                    "collection": "youtube_prasanthi_mandir_live",
+                    "youtubeVideoId": "nwTjUoNC54M",
+                }
+            ],
+            "updatedAt": "2026-11-25T01:57:41Z",
+        }
+        entry = index_builder.project_bhajan_to_index_entry(stub)
+        self.assertEqual(entry["title"], "Allah Eshwar Ek Hi Nam")
+        self.assertEqual(entry["metadataSource"], "youtube_prasanthi_mandir_live")
+        self.assertEqual(entry["recordingCount"], 1)
+        self.assertGreater(len(entry["phoneticTokens"]), 0)
+
+        legacy_yt = {
+            "id": "legacy-shiva",
+            "title": "Shiva Shiva Shiva",
+            "youtubeId": "abc123XYZ",
+        }
+        legacy_entry = index_builder.project_bhajan_to_index_entry(legacy_yt)
+        self.assertEqual(legacy_entry["recordingCount"], 1)
+        self.assertEqual(legacy_entry["metadataSource"], "youtube_channel")
+        stats = index_builder.compute_catalog_stats([stub, legacy_yt])
+        self.assertEqual(stats["youtubeVideosCount"], 2)
+        self.assertEqual(stats["verifiedSaiRhythmsCount"], 0)
+
+    def test_matched_missing_candidate_creates_titled_doc(self) -> None:
+        res = yt.process_youtube_videos(
+            FIXTURE_DATA["videos"],
+            self.candidates,
+            existing_bhajans={},
+            source_key="youtube_sss_bhajans",
+            now_iso="2026-11-25T08:00:00Z",
+        )
+        matched = res["updatedBhajans"]["sundara-sundara-vinayaka"]
+        self.assertEqual(matched["title"], "Sundara Sundara Vinayaka")
+        self.assertEqual(matched["slug"], "sundara-sundara-vinayaka")
+        self.assertEqual(matched["metadataSource"], "youtube_sss_bhajans")
+
 
 if __name__ == "__main__":
     unittest.main()

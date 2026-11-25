@@ -434,6 +434,61 @@ def _build_unmatched_youtube_bhajan(
     return doc
 
 
+def _build_matched_youtube_stub(
+    *,
+    target_id: str,
+    candidate_title: str,
+    fallback_title: str,
+    lyrics: list[str] | None,
+    recording: dict[str, Any],
+    collection: str,
+    now_iso: str,
+) -> dict[str, Any]:
+    """Create a complete structured record when a YouTube match targets a slug not yet in Firestore."""
+    resolved_title = (
+        str(candidate_title or "").strip()
+        or str(fallback_title or "").strip()
+        or re.sub(r"[-_]+", " ", target_id).strip().title()
+    )
+    lyrics_sets: list[dict[str, Any]] = []
+    if lyrics:
+        lyrics_sets.append(
+            {
+                "language": "Roman",
+                "script": crawler.infer_script_kind(lyrics, "Roman"),
+                "lines": lyrics,
+            }
+        )
+    doc: dict[str, Any] = {
+        "id": target_id,
+        "slug": target_id,
+        "title": resolved_title,
+        "deity": crawler.infer_deity(resolved_title),
+        "language": None,
+        "raga": None,
+        "beat": None,
+        "tala": None,
+        "tempo": None,
+        "gentsPitch": None,
+        "ladiesPitch": None,
+        "firstLineNotes": None,
+        "notesRange": None,
+        "meaning": None,
+        "lyricsSets": lyrics_sets,
+        "glossary": [],
+        "recordings": [recording],
+        "sheetMusicUrl": None,
+        "sourceUrl": None,
+        "metadataSource": collection,
+        "lyricsMissing": len(lyrics_sets) == 0,
+        "matchStatus": "verified",
+        "createdAt": now_iso,
+        "updatedAt": now_iso,
+    }
+    doc["missingFields"] = crawler.compute_missing_bhajan_fields(doc)
+    return doc
+
+
 class _CandidateIndex:
     """Fast token + 3-gram pre-filter to shrink O(V*C) Levenshtein scans to top candidates."""
 
@@ -624,11 +679,16 @@ def process_youtube_videos(
                 else:
                     stats["matchedAuto"] += 1
             else:
-                bhajans_state[target_id] = {
-                    "id": target_id,
-                    "recordings": [recording],
-                    "updatedAt": ts_now,
-                }
+                cand = cand_index.by_id.get(target_id)
+                bhajans_state[target_id] = _build_matched_youtube_stub(
+                    target_id=target_id,
+                    candidate_title=str((cand or {}).get("title") or ""),
+                    fallback_title=cleaned_title,
+                    lyrics=lyrics,
+                    recording=recording,
+                    collection=collection,
+                    now_iso=ts_now,
+                )
                 stats["matchedAuto"] += 1
             updated_ids.add(target_id)
             linked_ids.append(target_id)
@@ -728,11 +788,16 @@ def process_youtube_videos(
                 else:
                     stats["chapterMatches"] += 1
             else:
-                bhajans_state[target_id] = {
-                    "id": target_id,
-                    "recordings": [chap_rec],
-                    "updatedAt": ts_now,
-                }
+                cand = cand_index.by_id.get(target_id)
+                bhajans_state[target_id] = _build_matched_youtube_stub(
+                    target_id=target_id,
+                    candidate_title=str((cand or {}).get("title") or ""),
+                    fallback_title=c_title_clean,
+                    lyrics=None,
+                    recording=chap_rec,
+                    collection="youtube_volume_chapter",
+                    now_iso=ts_now,
+                )
                 stats["chapterMatches"] += 1
             updated_ids.add(target_id)
             if target_id not in linked:

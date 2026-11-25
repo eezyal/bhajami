@@ -477,6 +477,9 @@ export function JamStudioClient({
   const openEntryInStudio = useCallback((bhajanId: string) => {
     setSelectedId(bhajanId);
     setActiveView('studio');
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }, []);
 
   const filteredEntries = useMemo(() => {
@@ -1358,7 +1361,9 @@ export function JamStudioClient({
                   aria-current={b.id === activeEntry?.id ? 'true' : undefined}
                   onClick={() => setSelectedId(b.id)}
                 >
-                  <span className="song-item-title">{b.title}</span>
+                  <span className="song-item-title">
+                    {b.title || b.slug.replace(/[-_]+/g, ' ')}
+                  </span>
                   <span className="song-item-meta">
                     {b.deity ? <span>{b.deity}</span> : null}
                     {b.ragaName ? <span>· {b.ragaName}</span> : null}
