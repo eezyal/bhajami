@@ -238,7 +238,16 @@ export function groupRecommendationsByRaga(
 }
 
 /**
+ * Returns true if an index entry has at least one direct non-YouTube audio recording (e.g. Sai Rhythms MP3).
+ */
+export function entryHasDirectAudio(entry: BhajanIndexEntry): boolean {
+  if (typeof entry.hasDirectAudio === 'boolean') return entry.hasDirectAudio;
+  return entry.recordingCount > 0 && entry.metadataSource === 'sairhythms_verified';
+}
+
+/**
  * Build a playable-first randomized stream queue for Discovery, For You, or Liked Radio.
+ * When `mediaMode` is `'audio'` (default), restricts the queue to direct-audio entries when available.
  */
 export function buildStreamQueue(
   entries: readonly BhajanIndexEntry[],
@@ -247,12 +256,14 @@ export function buildStreamQueue(
     likedIds: readonly string[];
     deityFilter?: string;
     ragaFilter?: string;
+    mediaMode?: StreamMediaMode;
     seed?: number;
   },
 ): BhajanIndexEntry[] {
   const rng = makeRng(options.seed);
   const deityWanted = options.deityFilter?.trim().toLowerCase() || '';
   const ragaWanted = normalizeRagaKey(options.ragaFilter);
+  const mediaMode: StreamMediaMode = options.mediaMode === 'video' ? 'video' : 'audio';
 
   const matching = entries.filter((e) => {
     if (deityWanted && deityWanted !== 'all') {
@@ -265,17 +276,23 @@ export function buildStreamQueue(
   });
 
   const playable = matching.filter((e) => e.recordingCount > 0);
-  const pool = playable.length > 0 ? playable : matching;
+  const audioPlayable = playable.filter(entryHasDirectAudio);
+  const pool =
+    mediaMode === 'audio' && audioPlayable.length > 0
+      ? audioPlayable
+      : playable.length > 0
+        ? playable
+        : matching;
 
   if (options.mode === 'liked_only') {
-    const likedSet = resolveLikedSet(options.likedIds, pool);
-    const likedEntries = pool.filter((e) => likedSet.has(e.id));
-    if (likedEntries.length > 0) {
-      return shuffleWithRng(likedEntries, rng);
+    const likedAllSet = resolveLikedSet(options.likedIds, matching);
+    const likedMatches = matching.filter((e) => likedAllSet.has(e.id));
+    if (mediaMode === 'audio') {
+      const likedDirectAudio = likedMatches.filter(entryHasDirectAudio);
+      if (likedDirectAudio.length > 0) return shuffleWithRng(likedDirectAudio, rng);
     }
-    // Fallback to all liked entries across `matching` if none had recordings yet
-    const fallbackLikedSet = resolveLikedSet(options.likedIds, matching);
-    return shuffleWithRng(matching.filter((e) => fallbackLikedSet.has(e.id)), rng);
+    const likedPlayable = likedMatches.filter((e) => e.recordingCount > 0);
+    return shuffleWithRng(likedPlayable.length > 0 ? likedPlayable : likedMatches, rng);
   }
 
   if (options.mode === 'discovery') {

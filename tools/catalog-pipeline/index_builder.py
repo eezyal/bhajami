@@ -140,9 +140,16 @@ def project_bhajan_to_index_entry(
         missing_fields = crawler.compute_missing_bhajan_fields(normalized_for_missing)
         lyrics_missing = ("lyrics" in missing_fields)
 
-    recording_count = len(bhajan.get("recordings") or []) + len(bhajan.get("addedRecordings") or [])
+    all_recs = list(bhajan.get("recordings") or []) + list(bhajan.get("addedRecordings") or [])
+    recording_count = len(all_recs)
     if recording_count == 0 and str(bhajan.get("youtubeId") or "").strip():
         recording_count = 1
+    has_direct_audio = any(
+        not str(rec.get("youtubeVideoId") or "").strip()
+        and not re.search(r"(?:youtube\.com|youtu\.be)", str(rec.get("externalUrl") or ""), re.I)
+        and bool(str(rec.get("localPath") or rec.get("externalUrl") or "").strip())
+        for rec in all_recs
+    )
 
     entry: dict[str, Any] = {
         "id": str(bhajan.get("id") or bhajan.get("slug") or ""),
@@ -154,6 +161,7 @@ def project_bhajan_to_index_entry(
         "matchStatus": str(bhajan.get("matchStatus") or "verified"),
         "missingFields": missing_fields,
         "recordingCount": recording_count,
+        "hasDirectAudio": has_direct_audio,
         "metadataSource": metadata_source,
     }
     if deity:

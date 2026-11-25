@@ -168,6 +168,7 @@ export interface BhajanIndexEntry {
   matchStatus: MatchStatus;
   missingFields: MissingFieldKey[];
   recordingCount: number;
+  hasDirectAudio?: boolean;
   metadataSource: BhajanMetadataSource;
   slugAliases?: string[];
   updatedAt?: string;

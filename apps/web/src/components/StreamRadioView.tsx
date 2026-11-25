@@ -9,10 +9,7 @@ import {
   type StreamMediaMode,
   type StreamModeKind,
 } from '@bhajami/shared';
-import {
-  YouTubeSegmentPlayer,
-  type YouTubeSegmentPlayerHandle,
-} from './YouTubeSegmentPlayer';
+import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
 
 interface StreamRadioViewProps {
   minimized?: boolean;
@@ -79,7 +76,6 @@ export function StreamRadioView({
   onDismiss,
   similarRecs,
 }: StreamRadioViewProps) {
-  const ytPlayerRef = useRef<YouTubeSegmentPlayerHandle>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -87,21 +83,22 @@ export function StreamRadioView({
     currentBhajan,
     mediaMode,
   );
-  const audioUrl =
-    activeRec && !activeRec.youtubeVideoId
-      ? activeRec.localPath
-        ? `/api/local-audio?id=${encodeURIComponent(activeRec.id)}&bhajanId=${encodeURIComponent(currentBhajan?.id || '')}`
-        : activeRec.externalUrl || ''
-      : '';
+  const isDirectAudio = Boolean(activeRec && !activeRec.youtubeVideoId);
+  const audioUrl = isDirectAudio && activeRec
+    ? activeRec.localPath
+      ? `/api/local-audio?id=${encodeURIComponent(activeRec.id)}&bhajanId=${encodeURIComponent(currentBhajan?.id || '')}`
+      : activeRec.externalUrl || ''
+    : '';
+  const isYouTubeOnly = Boolean(activeRec?.youtubeVideoId && !hasAudioOption);
   const isLiked = currentEntry ? likedSet.has(currentEntry.id) : false;
 
   useEffect(() => {
-    setIsPlaying(autoPlay);
-  }, [autoPlay, currentEntry?.id, activeRec?.id]);
+    setIsPlaying(Boolean(isDirectAudio && audioUrl && autoPlay));
+  }, [activeRec?.id, audioUrl, autoPlay, currentEntry?.id, isDirectAudio]);
 
   const handleTogglePlayPause = useCallback(() => {
-    if (activeRec?.youtubeVideoId) {
-      ytPlayerRef.current?.togglePlay();
+    if (!isDirectAudio || !audioUrl) {
+      onExpand?.();
       return;
     }
     const audioEl = audioRef.current;
@@ -111,9 +108,7 @@ export function StreamRadioView({
     } else {
       audioEl.pause();
     }
-  }, [activeRec?.youtubeVideoId]);
-
-  const mediaModeLabel = mediaMode === 'audio' ? 'Audio (Data Saver)' : 'Video';
+  }, [audioUrl, isDirectAudio, onExpand]);
 
   return (
     <div className={minimized ? 'mini-stream-host' : 'app-stage'}>
@@ -131,7 +126,7 @@ export function StreamRadioView({
             <div>
               <h1 style={{ margin: 0, fontSize: '1.45rem' }}>Continuous Bhajan Stream</h1>
               <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
-                Starts in Data Saver mode and keeps playing in a bottom bar while you browse.
+                Audio mode streams direct MP3 tracks with zero video; switch to Video anytime to watch YouTube recordings.
               </p>
             </div>
             <div className="stream-controls-row">
@@ -205,9 +200,9 @@ export function StreamRadioView({
               className={`btn btn-sm ${mediaMode === 'audio' ? 'btn-success' : 'btn-primary'}`}
               aria-pressed={mediaMode === 'audio'}
               onClick={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
-              title="Toggle sticky Audio Saver vs Video mode across all tracks"
+              title="Toggle sticky Audio vs Video mode across all tracks"
             >
-              Mode: {mediaModeLabel}
+              Mode: {mediaMode === 'audio' ? 'Audio' : 'Video'}
             </button>
 
             <label
@@ -245,7 +240,9 @@ export function StreamRadioView({
                 title="Open full Stream player"
               >
                 <span className="mini-stream-kicker">
-                  Now Playing · {queueIndex + 1}/{queue.length}
+                  {isDirectAudio && audioUrl
+                    ? `Playing Audio · ${queueIndex + 1}/${queue.length}`
+                    : `Video paused · Tap to resume (${queueIndex + 1}/${queue.length})`}
                 </span>
                 <span className="mini-stream-title">{currentEntry.title}</span>
               </button>
@@ -263,10 +260,16 @@ export function StreamRadioView({
                 <button
                   type="button"
                   className="btn btn-sm btn-primary mini-icon-btn"
-                  aria-label={isPlaying ? 'Pause' : 'Play'}
+                  aria-label={
+                    isDirectAudio && audioUrl
+                      ? isPlaying
+                        ? 'Pause'
+                        : 'Play'
+                      : 'Open Stream to resume video'
+                  }
                   onClick={handleTogglePlayPause}
                 >
-                  {isPlaying ? '⏸' : '▶'}
+                  {isDirectAudio && audioUrl ? (isPlaying ? '⏸' : '▶') : '▶'}
                 </button>
                 <button
                   type="button"
@@ -286,16 +289,6 @@ export function StreamRadioView({
                 >
                   {isLiked ? '♥' : '♡'}
                 </button>
-                {hasVideoOption && (
-                  <button
-                    type="button"
-                    className="btn btn-sm"
-                    onClick={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
-                    aria-label="Toggle Audio or Video mode"
-                  >
-                    {mediaMode === 'audio' ? 'Audio' : 'Video'}
-                  </button>
-                )}
                 {onDismiss && (
                   <button
                     type="button"
@@ -329,7 +322,7 @@ export function StreamRadioView({
                   )}
                   {currentEntry.beat && <span className="badge">Beat: {currentEntry.beat}</span>}
                   {hasAudioOption && !hasVideoOption && (
-                    <span className="badge badge-verified">Audio-only track</span>
+                    <span className="badge badge-verified">Audio-only</span>
                   )}
                 </div>
                 <h2 style={{ margin: '0 0 0.2rem', fontSize: '1.35rem' }}>{currentEntry.title}</h2>
@@ -374,28 +367,9 @@ export function StreamRadioView({
             </div>
           )}
 
-          {/* Fixed-position media wrapper so switching full <-> minimized keeps playback uninterrupted */}
-          <div className={minimized ? 'mini-stream-media' : undefined}>
-            {loadingDetail && !currentBhajan ? (
-              <p className="field-hint" style={{ margin: 0 }}>
-                Loading stream audio and lyrics…
-              </p>
-            ) : activeRec?.youtubeVideoId ? (
-              <YouTubeSegmentPlayer
-                ref={ytPlayerRef}
-                videoId={activeRec.youtubeVideoId}
-                title={activeRec.label}
-                startSec={activeRec.startSec}
-                endSec={activeRec.endSec}
-                embeddable={activeRec.embeddable}
-                autoPlay={autoPlay}
-                mediaMode={mediaMode}
-                onMediaModeChange={onMediaModeChange}
-                minimized={minimized}
-                onEnded={autoPlay ? onNext : undefined}
-                onPlayStateChange={setIsPlaying}
-              />
-            ) : audioUrl ? (
+          {/* Audio stays mounted across full <-> minimized for zero-interruption MP3 playback; video never renders in Audio or Minimized modes */}
+          <div className={minimized ? 'mini-stream-audio-slot' : undefined}>
+            {audioUrl ? (
               <audio
                 ref={audioRef}
                 key={`${currentEntry.id}-${audioUrl}`}
@@ -408,7 +382,43 @@ export function StreamRadioView({
                   if (autoPlay) onNext();
                 }}
                 src={audioUrl}
-                style={{ width: '100%' }}
+                style={minimized ? { display: 'none' } : { width: '100%' }}
+              />
+            ) : minimized ? null : loadingDetail && !currentBhajan ? (
+              <p className="field-hint" style={{ margin: 0 }}>
+                Loading stream audio and lyrics…
+              </p>
+            ) : isYouTubeOnly && mediaMode === 'audio' ? (
+              <div
+                className="control-box"
+                style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem' }}
+              >
+                <p className="field-hint" style={{ margin: 0 }}>
+                  This bhajan currently has a YouTube video recording only (Audio mode skips video to save data).
+                </p>
+                <div className="stream-controls-row">
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    onClick={() => onMediaModeChange('video')}
+                  >
+                    Switch to Video
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={onNext} disabled={queue.length <= 1}>
+                    Next Audio Bhajan ▶
+                  </button>
+                </div>
+              </div>
+            ) : activeRec?.youtubeVideoId && mediaMode === 'video' ? (
+              <YouTubeSegmentPlayer
+                videoId={activeRec.youtubeVideoId}
+                title={activeRec.label}
+                startSec={activeRec.startSec}
+                endSec={activeRec.endSec}
+                embeddable={activeRec.embeddable}
+                autoPlay={autoPlay}
+                onMediaModeChange={onMediaModeChange}
+                onEnded={autoPlay ? onNext : undefined}
               />
             ) : currentBhajan === null && onRetryDetail ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem' }}>

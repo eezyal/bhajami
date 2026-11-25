@@ -999,15 +999,6 @@ a:focus-visible {
   gap: 0.45rem;
 }
 
-.yt-player-shell--compact {
-  max-width: 340px;
-}
-
-.yt-player-shell--minimized {
-  max-width: 320px;
-  gap: 0;
-}
-
 .yt-player-frame {
   width: 100%;
   min-width: 320px;
@@ -1257,7 +1248,7 @@ a:focus-visible {
 }
 
 .portal-shell.has-mini-stream {
-  padding-bottom: calc(14.5rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(9.5rem + env(safe-area-inset-bottom, 0px));
 }
 
 .mini-stream-dock {
@@ -1334,18 +1325,13 @@ a:focus-visible {
   justify-content: center;
 }
 
-.mini-stream-media {
-  flex: 0 0 auto;
+.mini-stream-audio-slot {
+  display: none;
 }
 
 @media (max-width: 767px) {
   .mini-stream-dock {
     bottom: calc(64px + env(safe-area-inset-bottom, 0px));
     padding: 0.5rem 0.65rem;
-  }
-
-  .mini-stream-media {
-    width: 100%;
-    max-width: 320px;
   }
 }

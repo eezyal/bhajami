@@ -186,4 +186,54 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
     assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').recording?.id, 'yt_abc');
     assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').hasAudioOption, false);
   });
+
+  it('filters discovery queue to direct-audio entries in audio mode and includes YouTube in video mode', () => {
+    const mixedEntries: BhajanIndexEntry[] = [
+      {
+        id: 'yt-only-track',
+        slug: 'yt-only-track',
+        title: 'YouTube Only Bhajan',
+        searchText: 'youtube only bhajan',
+        phoneticTokens: ['bhajan'],
+        lyricsMissing: true,
+        matchStatus: 'unmatched',
+        missingFields: ['lyrics'],
+        recordingCount: 1,
+        hasDirectAudio: false,
+        metadataSource: 'youtube_sss_bhajans',
+      },
+      {
+        id: 'mp3-track',
+        slug: 'mp3-track',
+        title: 'Direct Audio Bhajan',
+        searchText: 'direct audio bhajan',
+        phoneticTokens: ['bhajan'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        missingFields: [],
+        recordingCount: 1,
+        hasDirectAudio: true,
+        metadataSource: 'sairhythms_verified',
+      },
+    ];
+
+    const audioQueue = buildStreamQueue(mixedEntries, {
+      mode: 'discovery',
+      likedIds: [],
+      mediaMode: 'audio',
+      seed: 1,
+    });
+    assert.deepEqual(
+      audioQueue.map((e) => e.id),
+      ['mp3-track'],
+    );
+
+    const videoQueue = buildStreamQueue(mixedEntries, {
+      mode: 'discovery',
+      likedIds: [],
+      mediaMode: 'video',
+      seed: 1,
+    });
+    assert.equal(videoQueue.length, 2);
+  });
 });

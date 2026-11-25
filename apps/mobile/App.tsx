@@ -352,10 +352,15 @@ export default function App() {
         likedIds: likedIdsRef.current,
         deityFilter: streamDeity,
         ragaFilter: streamRaga,
+        mediaMode: streamMediaMode,
         seed: streamSeed,
       }),
-    [catalogIndex.entries, streamDeity, streamMode, streamRaga, streamSeed],
+    [catalogIndex.entries, streamDeity, streamMediaMode, streamMode, streamRaga, streamSeed],
   );
+
+  useEffect(() => {
+    setStreamIdx(0);
+  }, [streamDeity, streamMediaMode, streamMode, streamRaga, streamSeed]);
 
   const safeStreamIdx =
     streamQueue.length > 0 ? Math.min(streamIdx, streamQueue.length - 1) : 0;
@@ -586,13 +591,17 @@ export default function App() {
     unloadAudio,
   ]);
 
+  const streamIsMinimized = activeTab !== 'stream';
+
   const handleToggleStreamPlayPause = useCallback(() => {
-    if (streamPlayback.kind === 'youtube') {
-      ytStreamRef.current?.togglePlay();
-    } else if (streamPlayback.kind === 'audio') {
+    if (streamPlayback.kind === 'audio') {
       void playAudioUri(streamPlayback.uri);
+    } else if (streamIsMinimized) {
+      setActiveTab('stream');
+    } else if (streamPlayback.kind === 'youtube') {
+      ytStreamRef.current?.togglePlay();
     }
-  }, [playAudioUri, streamPlayback]);
+  }, [playAudioUri, streamIsMinimized, streamPlayback]);
 
   const handleDismissStream = useCallback(() => {
     setStreamSessionActive(false);
@@ -724,7 +733,6 @@ export default function App() {
     );
   }
 
-  const streamIsMinimized = activeTab !== 'stream';
   const showPersistentStream = streamSessionActive && Boolean(activeStreamEntry);
   const effectiveStreamPlaying =
     streamPlayback.kind === 'youtube' ? streamYtPlaying : isAudioPlaying;
@@ -792,8 +800,8 @@ export default function App() {
                   Your Sathya Sai Bhajans Companion
                 </Text>
                 <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                  Listen continuously in Data Saver Audio or Video mode, curate favorites with ♥, and
-                  explore multi-script Studio sheets.
+                  Listen continuously in Audio mode (MP3) or switch to Video anytime, curate favorites
+                  with ♥, and explore multi-script Studio sheets.
                 </Text>
 
                 <View style={styles.heroActions}>
@@ -1064,7 +1072,7 @@ export default function App() {
                         },
                       ]}
                     >
-                      Mode: {streamMediaMode === 'audio' ? 'Audio Saver' : 'Video'}
+                      Mode: {streamMediaMode === 'audio' ? 'Audio' : 'Video'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -1466,7 +1474,6 @@ export default function App() {
                         endSec={studioActiveRecording?.endSec}
                         embeddable={studioPlayback.embeddable}
                         autoPlay={false}
-                        mediaMode={streamMediaMode}
                         onMediaModeChange={handleMediaModeChange}
                         theme={theme}
                       />
@@ -1883,7 +1890,9 @@ export default function App() {
               <View style={styles.miniDockRow}>
                 <Pressable onPress={() => setActiveTab('stream')} style={{ flex: 1 }}>
                   <Text style={[styles.miniKicker, { color: theme.accent }]}>
-                    Playing · {safeStreamIdx + 1}/{streamQueue.length}
+                    {streamPlayback.kind === 'audio'
+                      ? `Playing Audio · ${safeStreamIdx + 1}/${streamQueue.length}`
+                      : `Video paused · Tap to resume (${safeStreamIdx + 1}/${streamQueue.length})`}
                   </Text>
                   <Text numberOfLines={1} style={[styles.listTitle, { color: theme.text }]}>
                     {activeStreamEntry.title}
@@ -1907,10 +1916,16 @@ export default function App() {
                       styles.miniIconBtn,
                       { borderColor: theme.accent, backgroundColor: theme.accent },
                     ]}
-                    accessibilityLabel={effectiveStreamPlaying ? 'Pause' : 'Play'}
+                    accessibilityLabel={
+                      streamPlayback.kind === 'audio'
+                        ? effectiveStreamPlaying
+                          ? 'Pause'
+                          : 'Play'
+                        : 'Resume video in Stream'
+                    }
                   >
                     <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                      {effectiveStreamPlaying ? '⏸' : '▶'}
+                      {streamPlayback.kind === 'audio' && effectiveStreamPlaying ? '⏸' : '▶'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -2039,8 +2054,8 @@ export default function App() {
               </View>
             )}
 
-            {/* Embedded Player — stays mounted cleanly across full <-> minimized transitions */}
-            {streamLoadingDetail && !activeStreamBhajan ? (
+            {/* No video inset ever rendered in Audio mode or Minimized mode; MP3 audio keeps playing cleanly */}
+            {streamIsMinimized ? null : streamLoadingDetail && !activeStreamBhajan ? (
               <View style={styles.inlineRow}>
                 <ActivityIndicator color={theme.accent} />
                 <Text style={[styles.statusText, { color: theme.textMuted }]}>
@@ -2068,27 +2083,7 @@ export default function App() {
                   <Text style={[styles.smallBtnText, { color: theme.text }]}>Retry</Text>
                 </Pressable>
               </View>
-            ) : streamPlayback.kind === 'youtube' ? (
-              <View style={streamIsMinimized ? styles.miniYtWrap : undefined}>
-                <MobileYouTubePlayer
-                  ref={ytStreamRef}
-                  videoId={streamPlayback.videoId}
-                  title={streamPreferredRec?.label || activeStreamEntry.title}
-                  startSec={streamPreferredRec?.startSec}
-                  endSec={streamPreferredRec?.endSec}
-                  embeddable={streamPlayback.embeddable}
-                  autoPlay={streamAutoPlay}
-                  mediaMode={streamMediaMode}
-                  onMediaModeChange={handleMediaModeChange}
-                  minimized={streamIsMinimized}
-                  onPlayStateChange={setStreamYtPlaying}
-                  onEnded={() => {
-                    if (streamAutoPlay) advanceStream(1);
-                  }}
-                  theme={theme}
-                />
-              </View>
-            ) : streamPlayback.kind === 'audio' && !streamIsMinimized ? (
+            ) : streamPlayback.kind === 'audio' ? (
               <Pressable
                 onPress={() => void playAudioUri(streamPlayback.uri)}
                 style={[styles.playBtn, { backgroundColor: theme.accent }]}
@@ -2097,15 +2092,65 @@ export default function App() {
                   <ActivityIndicator color={theme.accentText} />
                 ) : (
                   <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                    {isAudioPlaying ? 'Pause Stream Audio' : '▶ Play Stream Audio'}
+                    {isAudioPlaying ? 'Pause Audio' : '▶ Play Audio'}
                   </Text>
                 )}
               </Pressable>
-            ) : streamPlayback.kind === 'none' && !streamIsMinimized ? (
+            ) : streamPlayback.kind === 'youtube' && streamMediaMode === 'audio' ? (
+              <View
+                style={[
+                  styles.pitchBox,
+                  { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+                ]}
+              >
+                <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                  This bhajan currently has a YouTube video recording only (Audio mode skips video).
+                </Text>
+                <View style={styles.recActionsRow}>
+                  <Pressable
+                    onPress={() => handleMediaModeChange('video')}
+                    style={[styles.smallBtn, { backgroundColor: theme.accent }]}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
+                      Switch to Video
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => advanceStream(1)}
+                    style={[
+                      styles.smallBtn,
+                      { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
+                    ]}
+                  >
+                    <Text style={[styles.smallBtnText, { color: theme.text }]}>
+                      Next Audio Bhajan ▶
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : streamPlayback.kind === 'youtube' && streamMediaMode === 'video' ? (
+              <MobileYouTubePlayer
+                ref={ytStreamRef}
+                videoId={streamPlayback.videoId}
+                title={streamPreferredRec?.label || activeStreamEntry.title}
+                startSec={streamPreferredRec?.startSec}
+                endSec={streamPreferredRec?.endSec}
+                embeddable={streamPlayback.embeddable}
+                autoPlay={streamAutoPlay}
+                onMediaModeChange={handleMediaModeChange}
+                onPlayStateChange={setStreamYtPlaying}
+                onEnded={() => {
+                  if (streamAutoPlay) advanceStream(1);
+                }}
+                theme={theme}
+              />
+            ) : (
               <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                {streamPlayback.reason}
+                {streamPlayback.kind === 'none'
+                  ? streamPlayback.reason
+                  : 'No playable audio source is linked to this bhajan yet.'}
               </Text>
-            ) : null}
+            )}
           </View>
         )}
       </View>

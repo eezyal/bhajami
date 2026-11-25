@@ -25,9 +25,7 @@ export interface MobileYouTubePlayerProps {
   endSec?: number;
   embeddable?: boolean;
   autoPlay?: boolean;
-  mediaMode: StreamMediaMode;
   onMediaModeChange?: (next: StreamMediaMode) => void;
-  minimized?: boolean;
   onEnded?: () => void;
   onPlayStateChange?: (playing: boolean) => void;
   theme: {
@@ -46,7 +44,6 @@ interface YTPlayerWebInstance {
   playVideo?: () => void;
   pauseVideo?: () => void;
   getPlayerState?: () => number;
-  setPlaybackQuality?: (quality: string) => void;
 }
 
 interface YTWebGlobal {
@@ -104,7 +101,6 @@ function buildNativeYouTubeHtml(params: {
   startSec?: number;
   endSec?: number;
   autoPlay: boolean;
-  mediaMode: StreamMediaMode;
 }): string {
   const vars: Record<string, string | number> = {
     rel: 0,
@@ -113,16 +109,12 @@ function buildNativeYouTubeHtml(params: {
     enablejsapi: 1,
     autoplay: params.autoPlay ? 1 : 0,
   };
-  if (params.mediaMode === 'audio') {
-    vars.vq = 'small';
-  }
   if (typeof params.startSec === 'number' && params.startSec > 0) {
     vars.start = Math.floor(params.startSec);
   }
   if (typeof params.endSec === 'number' && params.endSec > 0) {
     vars.end = Math.floor(params.endSec);
   }
-  const quality = params.mediaMode === 'audio' ? 'small' : 'default';
 
   return `<!DOCTYPE html>
 <html>
@@ -151,9 +143,6 @@ function buildNativeYouTubeHtml(params: {
       events: {
         onReady: function(ev) {
           try {
-            if (${JSON.stringify(quality)} === 'small' && ev.target.setPlaybackQuality) {
-              ev.target.setPlaybackQuality('small');
-            }
             if (${params.autoPlay ? 'true' : 'false'}) {
               ev.target.playVideo();
             }
@@ -186,8 +175,8 @@ function buildNativeYouTubeHtml(params: {
 }
 
 /**
- * Cross-platform (iOS/Android WebView + Expo Web IFrame API) inline YouTube player
- * supporting auto-play, chapter start/end bounds, sticky Audio Saver mode, and minimized docking.
+ * Cross-platform (iOS/Android WebView + Expo Web IFrame API) inline YouTube video player
+ * rendered only when Video mode is active and full Stream/Studio view is visible.
  */
 export const MobileYouTubePlayer = forwardRef<
   MobileYouTubePlayerHandle,
@@ -200,9 +189,7 @@ export const MobileYouTubePlayer = forwardRef<
     endSec,
     embeddable = true,
     autoPlay = true,
-    mediaMode,
     onMediaModeChange,
-    minimized = false,
     onEnded,
     onPlayStateChange,
     theme,
@@ -222,8 +209,6 @@ export const MobileYouTubePlayer = forwardRef<
   onPlayStateRef.current = onPlayStateChange;
   const autoPlayRef = useRef(autoPlay);
   autoPlayRef.current = autoPlay;
-  const mediaModeRef = useRef(mediaMode);
-  mediaModeRef.current = mediaMode;
 
   const [embedBlocked, setEmbedBlocked] = useState(embeddable === false);
 
@@ -270,7 +255,6 @@ export const MobileYouTubePlayer = forwardRef<
     [],
   );
 
-  // Mount official YouTube IFrame API player when running on Expo Web
   useEffect(() => {
     if (Platform.OS !== 'web' || embedBlocked || !videoId) return;
     let cancelled = false;
@@ -302,9 +286,6 @@ export const MobileYouTubePlayer = forwardRef<
         playsinline: 1,
         autoplay: autoPlayRef.current ? 1 : 0,
       };
-      if (mediaModeRef.current === 'audio') {
-        playerVars.vq = 'small';
-      }
       if (typeof startSec === 'number' && startSec > 0) {
         playerVars.start = Math.floor(startSec);
       }
@@ -321,9 +302,6 @@ export const MobileYouTubePlayer = forwardRef<
           onReady: (ev) => {
             if (cancelled) return;
             try {
-              if (mediaModeRef.current === 'audio') {
-                ev.target.setPlaybackQuality?.('small');
-              }
               if (autoPlayRef.current) {
                 ev.target.playVideo?.();
               }
@@ -365,16 +343,6 @@ export const MobileYouTubePlayer = forwardRef<
     };
   }, [embedBlocked, endSec, startSec, videoId, webContainerId]);
 
-  useEffect(() => {
-    if (Platform.OS === 'web') {
-      try {
-        webPlayerRef.current?.setPlaybackQuality?.(mediaMode === 'audio' ? 'small' : 'default');
-      } catch {
-        // ignore
-      }
-    }
-  }, [mediaMode]);
-
   const nativeHtml = useMemo(
     () =>
       Platform.OS === 'web'
@@ -384,9 +352,8 @@ export const MobileYouTubePlayer = forwardRef<
             startSec,
             endSec,
             autoPlay,
-            mediaMode,
           }),
-    [autoPlay, endSec, mediaMode, startSec, videoId],
+    [autoPlay, endSec, startSec, videoId],
   );
 
   function handleNativeMessage(event: WebViewMessageEvent) {
@@ -428,15 +395,9 @@ export const MobileYouTubePlayer = forwardRef<
     );
   }
 
-  const frameStyle = minimized
-    ? styles.frameMinimized
-    : mediaMode === 'audio'
-      ? styles.frameCompact
-      : styles.frameFull;
-
   return (
-    <View style={minimized ? styles.shellMinimized : styles.shell}>
-      <View style={[frameStyle, { borderColor: theme.border }]}>
+    <View style={styles.shell}>
+      <View style={[styles.frameFull, { borderColor: theme.border }]}>
         {Platform.OS === 'web' ? (
           <View nativeID={webContainerId} style={styles.webHost} />
         ) : (
@@ -454,58 +415,38 @@ export const MobileYouTubePlayer = forwardRef<
         )}
       </View>
 
-      {!minimized && (
-        <View style={styles.metaRow}>
-          <Text style={[styles.metaText, { color: theme.textMuted }]}>
-            {chapterLabel ? `Segment ${chapterLabel} · ` : ''}
-            {mediaMode === 'audio' ? 'Audio Saver' : 'Video Mode'}
-          </Text>
-          <View style={styles.metaActions}>
-            {onMediaModeChange && (
-              <Pressable
-                onPress={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
-                style={[styles.toggleBtn, { borderColor: theme.border, backgroundColor: theme.surfaceRaised }]}
-              >
-                <Text style={[styles.toggleBtnText, { color: theme.text }]}>
-                  {mediaMode === 'audio' ? 'Switch to Video' : 'Audio Saver'}
-                </Text>
-              </Pressable>
-            )}
-            <Pressable onPress={() => void Linking.openURL(watchUrl)}>
-              <Text style={[styles.watchLink, { color: theme.accent }]}>Watch on YouTube</Text>
+      <View style={styles.metaRow}>
+        <Text style={[styles.metaText, { color: theme.textMuted }]}>
+          {chapterLabel ? `Segment ${chapterLabel} · ` : ''}Video
+        </Text>
+        <View style={styles.metaActions}>
+          {onMediaModeChange && (
+            <Pressable
+              onPress={() => onMediaModeChange('audio')}
+              style={[
+                styles.toggleBtn,
+                { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+              ]}
+            >
+              <Text style={[styles.toggleBtnText, { color: theme.text }]}>Switch to Audio</Text>
             </Pressable>
-          </View>
+          )}
+          <Pressable onPress={() => void Linking.openURL(watchUrl)}>
+            <Text style={[styles.watchLink, { color: theme.accent }]}>Watch on YouTube</Text>
+          </Pressable>
         </View>
-      )}
+      </View>
     </View>
   );
 });
 
 const styles = StyleSheet.create({
   shell: { gap: 8, width: '100%' },
-  shellMinimized: { width: 136 },
   frameFull: {
     width: '100%',
     aspectRatio: 16 / 9,
-    minHeight: 190,
+    minHeight: 195,
     borderRadius: 10,
-    overflow: 'hidden',
-    borderWidth: 1,
-    backgroundColor: '#000',
-  },
-  frameCompact: {
-    width: 280,
-    maxWidth: '100%',
-    height: 158,
-    borderRadius: 10,
-    overflow: 'hidden',
-    borderWidth: 1,
-    backgroundColor: '#000',
-  },
-  frameMinimized: {
-    width: 136,
-    height: 76,
-    borderRadius: 8,
     overflow: 'hidden',
     borderWidth: 1,
     backgroundColor: '#000',

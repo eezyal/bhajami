@@ -136,6 +136,7 @@ export function JamStudioClient({
     buildStreamQueue(initialIndex.entries, {
       mode: 'discovery',
       likedIds: [],
+      mediaMode: 'audio',
       seed: 1,
     }),
   );
@@ -428,18 +429,19 @@ export function JamStudioClient({
   const likedIdsRef = useRef(likedIds);
   likedIdsRef.current = likedIds;
 
-  // Rebuild stream queue cleanly on mode/filter/reshuffle without disrupting current song on like
+  // Rebuild stream queue cleanly on mode/filter/mediaMode/reshuffle without disrupting current song on like
   useEffect(() => {
     const nextQueue = buildStreamQueue(catalogIndex.entries, {
       mode: streamMode,
       likedIds: likedIdsRef.current,
       deityFilter: streamDeity,
       ragaFilter: streamRaga,
+      mediaMode: streamMediaMode,
       seed: streamSeed,
     });
     setStreamQueue(nextQueue);
     setStreamIdx(0);
-  }, [catalogIndex.entries, streamDeity, streamMode, streamRaga, streamSeed]);
+  }, [catalogIndex.entries, streamDeity, streamMediaMode, streamMode, streamRaga, streamSeed]);
 
   const activeStreamEntry = streamQueue[streamIdx] || streamQueue[0] || null;
   const activeStreamBhajan = activeStreamEntry ? bhajanCache[activeStreamEntry.id] || null : null;
