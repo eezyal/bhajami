@@ -364,6 +364,20 @@ def _resolve_abs_url(raw_url: str | None) -> str | None:
     return urllib.parse.urljoin(BASE_URL, cleaned)
 
 
+YOUTUBE_URL_RE = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:[^#]*&)?v=|embed/|shorts/)|youtube-nocookie\.com/embed/|youtu\.be/)([A-Za-z0-9_-]{11})",
+    re.I,
+)
+
+
+def extract_youtube_video_id(raw_url: str | None) -> str | None:
+    """Extract canonical 11-char YouTube video ID from watch/embed/short links."""
+    if not raw_url:
+        return None
+    m = YOUTUBE_URL_RE.search(html_lib.unescape(raw_url.strip()))
+    return m.group(1) if m else None
+
+
 def parse_sairhythms_html(slug: str, html: str, crawled_at: str | None = None) -> dict[str, Any] | None:
     """Parse a Sai Rhythms devotional song HTML page into the canonical Bhajan record."""
     if not html or ("node-type-devotional-song" not in html and "devotional-song-content" not in html):
@@ -512,6 +526,24 @@ def parse_sairhythms_html(slug: str, html: str, crawled_at: str | None = None) -
                 "label": f"Sai Rhythms Reference Audio ({fname})",
                 "collection": "sairhythms_ref",
                 "externalUrl": abs_url,
+            }
+        )
+
+    seen_yt_ids: set[str] = set()
+    for media_el in soup.select("iframe[src], a[href]"):
+        raw_ref = media_el.get("src") or media_el.get("href")
+        yt_id = extract_youtube_video_id(str(raw_ref) if raw_ref else None)
+        if not yt_id or yt_id in seen_yt_ids:
+            continue
+        seen_yt_ids.add(yt_id)
+        recordings.append(
+            {
+                "id": f"sair_yt_{yt_id}",
+                "label": f"Sai Rhythms Reference Video ({title})",
+                "collection": "sairhythms_ref",
+                "externalUrl": f"https://www.youtube.com/watch?v={yt_id}",
+                "youtubeVideoId": yt_id,
+                "embeddable": True,
             }
         )
 

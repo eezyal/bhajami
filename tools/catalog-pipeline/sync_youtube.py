@@ -434,6 +434,69 @@ def _build_unmatched_youtube_bhajan(
     return doc
 
 
+class _CandidateIndex:
+    """Fast token + 3-gram pre-filter to shrink O(V*C) Levenshtein scans to top candidates."""
+
+    def __init__(self, candidates: Iterable[Mapping[str, Any]]) -> None:
+        self.candidates: list[dict[str, Any]] = [dict(c) for c in candidates]
+        self.by_id: dict[str, dict[str, Any]] = {
+            str(c.get("id") or ""): c for c in self.candidates if c.get("id")
+        }
+        self._word_index: dict[str, list[int]] = {}
+        self._prefix_index: dict[str, list[int]] = {}
+        self._trigram_index: dict[str, list[int]] = {}
+
+        for idx, cand in enumerate(self.candidates):
+            canon = phonetics.canonicalize_phrase(str(cand.get("title") or ""))
+            if not canon:
+                continue
+            words = {w for w in canon.split() if len(w) >= 3}
+            for w in words:
+                self._word_index.setdefault(w, []).append(idx)
+                self._prefix_index.setdefault(w[:3], []).append(idx)
+            compact = canon.replace(" ", "")
+            if len(compact) >= 3:
+                grams = {compact[i : i + 3] for i in range(len(compact) - 2)}
+                for g in grams:
+                    self._trigram_index.setdefault(g, []).append(idx)
+
+    def shortlist(
+        self,
+        query_title: str,
+        *,
+        entity_aliases: Mapping[str, str] | None = None,
+        max_candidates: int = 30,
+    ) -> list[dict[str, Any]]:
+        if len(self.candidates) <= max_candidates:
+            return self.candidates
+
+        canon = phonetics.canonicalize_phrase(query_title)
+        scores: dict[int, int] = {}
+        if canon:
+            words = {w for w in canon.split() if len(w) >= 3}
+            for w in words:
+                for idx in self._word_index.get(w, ()):
+                    scores[idx] = scores.get(idx, 0) + 3
+                for idx in self._prefix_index.get(w[:3], ()):
+                    scores[idx] = scores.get(idx, 0) + 2
+            compact = canon.replace(" ", "")
+            if len(compact) >= 3:
+                for g in {compact[i : i + 3] for i in range(len(compact) - 2)}:
+                    for idx in self._trigram_index.get(g, ()):
+                        scores[idx] = scores.get(idx, 0) + 1
+
+        ranked_indices = sorted(scores, key=lambda i: (-scores[i], i))[:max_candidates]
+        shortlisted = [self.candidates[i] for i in ranked_indices]
+        seen_ids = {str(c.get("id") or "") for c in shortlisted}
+
+        if canon and entity_aliases and canon in entity_aliases:
+            target_id = str(entity_aliases[canon])
+            if target_id not in seen_ids and target_id in self.by_id:
+                shortlisted.insert(0, self.by_id[target_id])
+
+        return shortlisted
+
+
 def process_youtube_videos(
     videos: Iterable[Mapping[str, Any]],
     catalog_candidates: Iterable[Mapping[str, Any]],
@@ -456,7 +519,8 @@ def process_youtube_videos(
         if source_key == "youtube_mandir_live"
         else "youtube_sss_bhajans"
     )
-    candidates_list = [dict(c) for c in catalog_candidates]
+    cand_index = _CandidateIndex(catalog_candidates)
+    candidates_list = cand_index.candidates
     bhajans_state: dict[str, dict[str, Any]] = {
         str(k): dict(v) for k, v in (existing_bhajans or {}).items()
     }
@@ -522,9 +586,10 @@ def process_youtube_videos(
             continue
 
         lyrics = extract_mandir_lyrics(str(video.get("rawDescription") or ""))
+        shortlist = cand_index.shortlist(cleaned_title, entity_aliases=entity_aliases)
         eval_res = phonetics.evaluate_match_candidate(
             cleaned_title,
-            candidates_list,
+            shortlist,
             query_lyrics=lyrics,
             query_id=f"yt_{vid}",
             entity_aliases=entity_aliases,
@@ -627,9 +692,10 @@ def process_youtube_videos(
             c_title_clean = phonetics.sanitize_title(chap["title"]) or chap["title"]
             start_sec = int(chap["startSec"])
             end_sec = int(chap["endSec"])
+            shortlist = cand_index.shortlist(c_title_clean, entity_aliases=entity_aliases)
             eval_res = phonetics.evaluate_match_candidate(
                 c_title_clean,
-                candidates_list,
+                shortlist,
                 query_id=f"yt_{vid}_t{start_sec}",
                 entity_aliases=entity_aliases,
                 do_not_merge_pairs=do_not_merge_pairs,
@@ -839,13 +905,22 @@ def run_sync(
                 batch = fs_client.batch()
                 ops_in_batch = 0
 
-        for bid, bdoc in {**result["updatedBhajans"], **result["createdBhajans"]}.items():
+        all_bhajan_items = list({**result["updatedBhajans"], **result["createdBhajans"]}.items())
+        col = fs_client.collection("bhajans")
+        existing_docs_map: dict[str, dict[str, Any]] = {}
+        for idx in range(0, len(all_bhajan_items), 200):
+            chunk_ids = [bid for bid, _ in all_bhajan_items[idx : idx + 200]]
+            refs = [col.document(bid) for bid in chunk_ids]
+            for snap in fs_client.get_all(refs):
+                if snap.exists:
+                    existing_docs_map[snap.id] = snap.to_dict() or {}
+
+        for bid, bdoc in all_bhajan_items:
             if writes >= max_firestore_writes:
                 break
-            ref = fs_client.collection("bhajans").document(bid)
-            snap = ref.get()
-            if snap.exists:
-                merged_doc = snap.to_dict() or {}
+            ref = col.document(bid)
+            if bid in existing_docs_map:
+                merged_doc = existing_docs_map[bid]
                 for rec in bdoc.get("recordings") or []:
                     merged_doc = _merge_recording_into_bhajan(merged_doc, rec, utc_now_iso())
                 batch.set(ref, merged_doc)

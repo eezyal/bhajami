@@ -2,13 +2,23 @@ name: Daily bhaJami Cloud Catalog Sync
 
 on:
   schedule:
-    - cron: '15 6 * * *'
+    - cron: '15 6,18 * * *'
   workflow_dispatch:
     inputs:
       max_songs_per_run:
-        description: 'Max Sai Rhythms detail pages to process per run (default 60)'
+        description: 'Max Sai Rhythms detail pages to process per run (default 300; ~55 min)'
         required: false
-        default: '60'
+        default: '300'
+        type: string
+      run_youtube:
+        description: 'Run YouTube sync after Sai Rhythms (recommended after initial Sai Rhythms backfill finishes)'
+        required: false
+        default: false
+        type: boolean
+      max_youtube_videos:
+        description: 'Max videos per YouTube source when run_youtube is true (default 200)'
+        required: false
+        default: '200'
         type: string
 
 concurrency:
@@ -21,6 +31,7 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -58,7 +69,9 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          MAX_SONGS: ${{ inputs.max_songs_per_run || '60' }}
+          MAX_SONGS: ${{ inputs.max_songs_per_run || '300' }}
+          RUN_YOUTUBE: ${{ inputs.run_youtube || 'false' }}
+          MAX_YT_VIDEOS: ${{ inputs.max_youtube_videos || '200' }}
         run: |
           if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
             echo "FIREBASE_SERVICE_ACCOUNT_JSON secret not configured; skipping cloud sync steps."
@@ -77,24 +90,26 @@ jobs:
             --publish-firestore \
             --max-firestore-writes 4000
 
-          if [ -n "$YOUTUBE_API_KEY" ]; then
-            echo "Running incremental YouTube Prasanthi Mandir Live sync..."
+          if [ "$RUN_YOUTUBE" = "true" ] && [ -n "$YOUTUBE_API_KEY" ]; then
+            echo "Running incremental YouTube Prasanthi Mandir Live sync (max ${MAX_YT_VIDEOS})..."
             python3 tools/catalog-pipeline/sync_youtube.py \
               --source youtube_mandir_live \
               --incremental \
+              --max-videos "$MAX_YT_VIDEOS" \
               --liveness-check-limit 30 \
               --publish-firestore \
               --max-firestore-writes 4000
 
-            echo "Running incremental YouTube Sri Sathya Sai Bhajans sync..."
+            echo "Running incremental YouTube Sri Sathya Sai Bhajans sync (max ${MAX_YT_VIDEOS})..."
             python3 tools/catalog-pipeline/sync_youtube.py \
               --source youtube_sss_bhajans \
               --incremental \
+              --max-videos "$MAX_YT_VIDEOS" \
               --liveness-check-limit 30 \
               --publish-firestore \
               --max-firestore-writes 4000
           else
-            echo "YOUTUBE_API_KEY secret not set; skipping YouTube sync steps."
+            echo "YouTube step skipped (run_youtube=${RUN_YOUTUBE}; Sai Rhythms backfill takes priority)."
           fi
 
           echo "Rebuilding bounded Firestore search shards and catalogMeta/latest..."

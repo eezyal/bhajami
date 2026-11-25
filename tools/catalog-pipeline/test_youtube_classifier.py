@@ -159,6 +159,26 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         # IngestionRun timestamp conforms to strict UTC ISO-8601 format
         self.assertRegex(res["ingestionRun"]["startedAt"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
+    def test_candidate_index_shortlists_fast_across_1000_entries(self) -> None:
+        import time
+
+        many_candidates = [
+            {"id": f"filler-{i}", "title": f"Filler Bhajan Number {i}", "lyricsLines": []}
+            for i in range(1000)
+        ]
+        many_candidates.append(
+            {"id": "panduranga-vitthala", "title": "Panduranga Vitthala", "lyricsLines": []}
+        )
+
+        start = time.monotonic()
+        idx = yt._CandidateIndex(many_candidates)
+        shortlisted = idx.shortlist("Panduranga Vittala")
+        elapsed = time.monotonic() - start
+
+        self.assertLess(elapsed, 0.5)
+        self.assertLessEqual(len(shortlisted), 30)
+        self.assertTrue(any(c["id"] == "panduranga-vitthala" for c in shortlisted))
+
 
 if __name__ == "__main__":
     unittest.main()

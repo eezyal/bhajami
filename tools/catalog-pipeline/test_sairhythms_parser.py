@@ -36,7 +36,12 @@ class SaiRhythmsParserTests(unittest.TestCase):
         self.assertEqual(doc["gentsPitch"]["semitoneFromC"], 8)
         self.assertEqual(doc["ladiesPitch"]["pancham"], "6 Pancham")
         self.assertEqual(doc["ladiesPitch"]["semitoneFromC"], 9)
-        self.assertEqual(len(doc["recordings"]), 2)
+        self.assertEqual(len(doc["recordings"]), 3)
+        yt_rec = next((r for r in doc["recordings"] if r.get("youtubeVideoId") == "-uFxM8Im-Ts"), None)
+        self.assertIsNotNone(yt_rec)
+        assert yt_rec is not None
+        self.assertEqual(yt_rec["id"], "sair_yt_-uFxM8Im-Ts")
+        self.assertTrue(yt_rec["embeddable"])
         self.assertIn("https://sairhythms.sathyasai.org/sites/default/files/pages/pdfjs/web/viewer.html", doc["sheetMusicUrl"])
         self.assertFalse(doc["lyricsMissing"])
 
@@ -105,7 +110,7 @@ class SaiRhythmsParserTests(unittest.TestCase):
         # Appends Sai Rhythms reference recordings without dropping existing curated YouTube audio
         rec_ids = {r["id"] for r in merged["recordings"]}
         self.assertIn("yt_abc123", rec_ids)
-        self.assertEqual(len(rec_ids), 3)
+        self.assertEqual(len(rec_ids), 4)
 
     def test_missing_fields_honors_empty_lyrics_and_omits_fake_placeholders(self) -> None:
         minimal_html = """
