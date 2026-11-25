@@ -14,7 +14,8 @@
     "test:phase1": "tsx --tsconfig apps/web/tsconfig.json --test packages/shared/tests/missing-fields.test.ts apps/web/tests/api-auth-contracts.test.ts",
     "test:phase5": "tsx --tsconfig apps/web/tsconfig.json --test apps/web/tests/curation-and-playback.test.ts",
     "test:phonetics": "tsx --tsconfig apps/web/tsconfig.json --test packages/shared/tests/phonetics.test.ts && python3 -m unittest discover -s tools/catalog-pipeline -p 'test_phonetics.py'",
-    "test:recommendations": "tsx --tsconfig apps/web/tsconfig.json --test packages/shared/tests/recommendations.test.ts"
+    "test:recommendations": "tsx --tsconfig apps/web/tsconfig.json --test packages/shared/tests/recommendations.test.ts",
+    "test:mobile": "tsx --tsconfig apps/web/tsconfig.json --test apps/mobile/tests/mobile-catalog.test.ts"
   },
   "engines": {
     "node": ">=20.0.0"
