@@ -1,19 +1,34 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import {
   computeLyricsDiff,
+  type Bhajan,
   type BhajanRevision,
+  type IngestionRunDoc,
   type LyricCorrection,
   type OutboxEmailRecord,
+  type ProposedMetadataPatch,
   type SubmissionType,
 } from '@bhajami/shared';
 import { getCurrentFirebaseIdToken, getFirebaseClientAuth } from '@/lib/firebase-client';
 import { ThemeToggle } from './ThemeToggle';
+import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
 
-type AdminTab = 'pending' | 'info_requested' | 'approved' | 'rejected' | 'outbox';
+const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'pschax@gmail.com';
+
+type AdminTab =
+  | 'pending'
+  | 'info_requested'
+  | 'approved'
+  | 'rejected'
+  | 'outbox'
+  | 'daily_curation'
+  | 'pipeline_health';
+
+type CurationQueueView = 'missing_lyrics' | 'needs_verification' | 'ambiguous_long';
 
 interface AdminModerationClientProps {
   initialCorrections: LyricCorrection[];
@@ -55,12 +70,26 @@ export function AdminModerationClient({
       '',
   );
   const [editedLyricsText, setEditedLyricsText] = useState('');
+  const [editedMetadata, setEditedMetadata] = useState<ProposedMetadataPatch>({});
   const [reviewNote, setReviewNote] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const reviewNoteRef = useRef<HTMLTextAreaElement>(null);
+
+  // Daily Curation & Pipeline Health state
+  const [curationView, setCurationView] = useState<CurationQueueView>('missing_lyrics');
+  const [curationItems, setCurationItems] = useState<Bhajan[]>([]);
+  const [selectedCurationId, setSelectedCurationId] = useState('');
+  const [curationLoading, setCurationLoading] = useState(false);
+  const [curationError, setCurationError] = useState<string | null>(null);
+  const [curatedLyricsText, setCuratedLyricsText] = useState('');
+  const [curatedScript, setCuratedScript] = useState('Sanskrit / Hindi (Roman)');
+  const [curatedMeta, setCuratedMeta] = useState<ProposedMetadataPatch>({});
+  const [dismissReason, setDismissReason] = useState('');
+  const [pipelineRuns, setPipelineRuns] = useState<IngestionRunDoc[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
 
   const pendingList = useMemo(
     () => corrections.filter((c) => c.status === 'pending'),
@@ -99,10 +128,98 @@ export function AdminModerationClient({
   useEffect(() => {
     if (selected) {
       setEditedLyricsText(selected.proposedLyrics.join('\n'));
+      const m = selected.proposedMetadata;
+      setEditedMetadata({
+        title: m?.title || '',
+        deity: m?.deity || '',
+        language: m?.language || '',
+        ragaName: m?.ragaName || m?.raga || '',
+        arohanam: m?.arohanam || '',
+        avarohanam: m?.avarohanam || '',
+        gentsPitchRaw: m?.gentsPitchRaw || '',
+        ladiesPitchRaw: m?.ladiesPitchRaw || '',
+        beat: m?.beat || m?.tala || '',
+        tempo: m?.tempo !== undefined ? String(m.tempo) : '',
+        firstLineSargam: m?.firstLineSargam || '',
+        firstLineWestern: m?.firstLineWestern || '',
+        notesRange: m?.notesRange || '',
+        sheetMusicUrl: m?.sheetMusicUrl || '',
+        meaning: m?.meaning || '',
+      });
       setReviewNote(selected.infoRequestNote || selected.reviewNote || '');
       setActionError(null);
     }
-  }, [selected?.id]);
+  }, [selected]);
+
+  const loadCurationData = useCallback(
+    async (view: CurationQueueView | 'runs', explicitToken?: string | null) => {
+      if (view === 'runs') setRunsLoading(true);
+      else setCurationLoading(true);
+      setCurationError(null);
+      try {
+        const token =
+          explicitToken !== undefined ? explicitToken : await getCurrentFirebaseIdToken();
+        const res = await fetch(`/api/admin/curation?view=${encodeURIComponent(view)}&limit=25`, {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setCurationError(data.error || 'Failed loading curation queue.');
+        } else if (view === 'runs') {
+          setPipelineRuns(data.runs || []);
+        } else {
+          const items: Bhajan[] = data.items || [];
+          setCurationItems(items);
+          setSelectedCurationId((prev) =>
+            items.some((b) => b.id === prev) ? prev : items[0]?.id || '',
+          );
+        }
+      } catch (err) {
+        setCurationError(err instanceof Error ? err.message : 'Network error loading curation.');
+      } finally {
+        if (view === 'runs') setRunsLoading(false);
+        else setCurationLoading(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (activeTab === 'daily_curation') {
+      void loadCurationData(curationView);
+    } else if (activeTab === 'pipeline_health') {
+      void loadCurationData('runs');
+    }
+  }, [activeTab, curationView, loadCurationData]);
+
+  const selectedCurationItem = useMemo(
+    () =>
+      curationItems.find((b) => b.id === selectedCurationId) ||
+      curationItems[0] ||
+      null,
+    [curationItems, selectedCurationId],
+  );
+
+  useEffect(() => {
+    if (selectedCurationItem) {
+      setCuratedLyricsText(selectedCurationItem.lyricsSets[0]?.lines.join('\n') || '');
+      setCuratedScript(selectedCurationItem.lyricsSets[0]?.language || 'Sanskrit / Hindi (Roman)');
+      setCuratedMeta({
+        deity: selectedCurationItem.deity || '',
+        ragaName: selectedCurationItem.raga?.name || '',
+        arohanam: selectedCurationItem.raga?.arohanam || '',
+        avarohanam: selectedCurationItem.raga?.avarohanam || '',
+        beat: selectedCurationItem.beat || '',
+        tempo: selectedCurationItem.tempo || '',
+        gentsPitchRaw: selectedCurationItem.gentsPitchRaw || selectedCurationItem.gentsPitch?.raw || '',
+        ladiesPitchRaw: selectedCurationItem.ladiesPitchRaw || selectedCurationItem.ladiesPitch?.raw || '',
+        firstLineSargam: selectedCurationItem.firstLineNotes?.sargam || '',
+        meaning: selectedCurationItem.meaning || '',
+      });
+      setDismissReason('');
+    }
+  }, [selectedCurationItem]);
 
   const reloadAll = async (explicitToken?: string | null) => {
     const token = explicitToken !== undefined ? explicitToken : await getCurrentFirebaseIdToken();
@@ -197,6 +314,15 @@ export function AdminModerationClient({
 
     setActionBusy(true);
     try {
+      const compactMeta: ProposedMetadataPatch = {};
+      if (action === 'approve') {
+        for (const [key, val] of Object.entries(editedMetadata)) {
+          if (typeof val === 'string' && val.trim()) {
+            (compactMeta as Record<string, string>)[key] = val.trim();
+          }
+        }
+      }
+
       const token = await getCurrentFirebaseIdToken();
       const res = await fetch(`/api/corrections/${encodeURIComponent(selected.id)}`, {
         method: 'PATCH',
@@ -208,7 +334,9 @@ export function AdminModerationClient({
           action,
           reviewNote,
           editedLyrics: action === 'approve' ? editedLines : undefined,
-          reviewerEmail: adminEmail || 'pschax@gmail.com',
+          editedMetadata:
+            action === 'approve' && Object.keys(compactMeta).length > 0 ? compactMeta : undefined,
+          reviewerEmail: adminEmail || ADMIN_EMAIL,
         }),
       });
       const json = await res.json();
@@ -233,11 +361,48 @@ export function AdminModerationClient({
     }
   };
 
+  const handleCurationAction = async (body: Record<string, unknown>, successMsg: string) => {
+    setActionBusy(true);
+    setCurationError(null);
+    setBanner(null);
+    try {
+      const token = await getCurrentFirebaseIdToken();
+      const res = await fetch('/api/admin/curation', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setCurationError(json.error || 'Curation action failed.');
+        setActionBusy(false);
+        return;
+      }
+      await loadCurationData(curationView, token);
+      setBanner(successMsg);
+    } catch (err) {
+      setCurationError(err instanceof Error ? err.message : 'Network error during curation action.');
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const handleTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (typeof HTMLElement !== 'undefined' && Object.hasOwn(HTMLElement.prototype, 'focusGroup')) {
       return;
     }
-    const order: AdminTab[] = ['pending', 'info_requested', 'approved', 'rejected', 'outbox'];
+    const order: AdminTab[] = [
+      'pending',
+      'info_requested',
+      'approved',
+      'rejected',
+      'outbox',
+      'daily_curation',
+      'pipeline_health',
+    ];
     const idx = order.indexOf(activeTab);
     if (e.key === 'ArrowRight') {
       const next = order[(idx + 1) % order.length];
@@ -264,7 +429,7 @@ export function AdminModerationClient({
             <span>
               <span className="brand-title">bhaJami Admin Moderation</span>
               <span className="brand-sub">
-                Community Contributions Queue · Admin Notifications to pschax@gmail.com
+                Community Contributions Queue · Admin Notifications to {ADMIN_EMAIL}
               </span>
             </span>
           </Link>
@@ -409,6 +574,32 @@ export function AdminModerationClient({
             >
               Email Outbox ({outbox.length})
             </button>
+            <button
+              id="admin-tab-daily_curation"
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'daily_curation'}
+              {...({ focusgroupstart: activeTab === 'daily_curation' ? '' : undefined } as Record<
+                string,
+                string | undefined
+              >)}
+              onClick={() => setActiveTab('daily_curation')}
+            >
+              Daily Curation
+            </button>
+            <button
+              id="admin-tab-pipeline_health"
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'pipeline_health'}
+              {...({ focusgroupstart: activeTab === 'pipeline_health' ? '' : undefined } as Record<
+                string,
+                string | undefined
+              >)}
+              onClick={() => setActiveTab('pipeline_health')}
+            >
+              Pipeline Health
+            </button>
           </div>
 
           {(['pending', 'info_requested', 'approved', 'rejected'] as const).map((tabKey) => {
@@ -542,7 +733,7 @@ export function AdminModerationClient({
           >
             <div className="tabpanel-inner">
               <p className="field-hint" style={{ marginBottom: '0.85rem' }}>
-                Every submission and moderator follow-up email (to <strong>pschax@gmail.com</strong>{' '}
+                Every submission and moderator follow-up email (to <strong>{ADMIN_EMAIL}</strong>{' '}
                 or the contributor) is prepared for live email delivery and mirrored here in dev.
               </p>
               <div style={{ display: 'grid', gap: '1rem' }}>
@@ -577,10 +768,398 @@ export function AdminModerationClient({
               </div>
             </div>
           </div>
+
+          {/* Daily Curation Workbench */}
+          <div
+            role="tabpanel"
+            aria-labelledby="admin-tab-daily_curation"
+            hidden={activeTab !== 'daily_curation' ? ('until-found' as unknown as boolean) : false}
+            tabIndex={activeTab === 'daily_curation' ? 0 : undefined}
+          >
+            <div className="tabpanel-inner">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+                {(
+                  [
+                    ['missing_lyrics', 'Missing Lyrics'],
+                    ['needs_verification', 'Needs Verification (Doubt)'],
+                    ['ambiguous_long', 'Ambiguous >6.5m'],
+                  ] as const
+                ).map(([vKey, vLabel]) => (
+                  <button
+                    key={vKey}
+                    type="button"
+                    className={`btn btn-sm ${curationView === vKey ? 'btn-primary' : ''}`}
+                    onClick={() => setCurationView(vKey)}
+                  >
+                    {vLabel}
+                  </button>
+                ))}
+              </div>
+
+              {curationError && (
+                <p role="alert" style={{ color: 'var(--danger)', fontSize: '0.88rem' }}>
+                  {curationError}
+                </p>
+              )}
+
+              {curationLoading ? (
+                <p className="field-hint">Loading curation queue…</p>
+              ) : curationItems.length === 0 ? (
+                <p style={{ color: 'var(--muted)' }}>
+                  No items waiting in &quot;{curationView.replace('_', ' ')}&quot;.
+                </p>
+              ) : (
+                <>
+                  <div className="table-wrapper" style={{ marginBottom: '1rem' }}>
+                    <table className="mod-table">
+                      <thead>
+                        <tr>
+                          <th>Title</th>
+                          <th>Status</th>
+                          <th>Missing Fields</th>
+                          <th>Recordings</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {curationItems.map((item) => (
+                          <tr
+                            key={item.id}
+                            data-selected={selectedCurationItem?.id === item.id ? 'true' : undefined}
+                            onClick={() => setSelectedCurationId(item.id)}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <th>
+                              <strong>{item.title}</strong>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                <code>{item.id}</code>
+                              </div>
+                            </th>
+                            <td>
+                              <span className="badge badge-pending">
+                                {item.matchStatus || (item.lyricsMissing ? 'missing_lyrics' : 'open')}
+                              </span>
+                            </td>
+                            <td style={{ fontSize: '0.8rem' }}>
+                              {(item.missingFields || []).join(', ') || 'none'}
+                            </td>
+                            <td>{item.recordings.length}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {selectedCurationItem && (
+                    <div className="control-box">
+                      <h3 style={{ marginTop: 0 }}>{selectedCurationItem.title}</h3>
+                      {selectedCurationItem.recordings.find((r) => r.youtubeVideoId) ? (
+                        (() => {
+                          const ytRec = selectedCurationItem.recordings.find(
+                            (r) => r.youtubeVideoId,
+                          )!;
+                          return (
+                            <div style={{ marginBottom: '1rem' }}>
+                              <YouTubeSegmentPlayer
+                                videoId={ytRec.youtubeVideoId!}
+                                title={ytRec.label}
+                                startSec={ytRec.startSec}
+                                endSec={ytRec.endSec}
+                                embeddable={ytRec.embeddable}
+                              />
+                            </div>
+                          );
+                        })()
+                      ) : selectedCurationItem.recordings[0]?.externalUrl ? (
+                        <audio
+                          controls
+                          preload="metadata"
+                          src={selectedCurationItem.recordings[0].externalUrl}
+                          style={{ width: '100%', marginBottom: '1rem' }}
+                        />
+                      ) : null}
+
+                      {(selectedCurationItem.matchCandidates?.length ?? 0) > 0 && (
+                        <div style={{ marginBottom: '1rem' }}>
+                          <div className="control-label">Candidate Matches (Doubt Resolution)</div>
+                          <div style={{ display: 'grid', gap: '0.5rem' }}>
+                            {selectedCurationItem.matchCandidates!.map((cand) => (
+                              <div
+                                key={cand.targetBhajanId}
+                                style={{
+                                  display: 'flex',
+                                  flexWrap: 'wrap',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '0.5rem',
+                                  padding: '0.55rem 0.75rem',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '8px',
+                                  background: 'var(--surface)',
+                                }}
+                              >
+                                <div>
+                                  <strong>{cand.targetTitle}</strong> (
+                                  {(cand.score * 100).toFixed(1)}% · {cand.reason})
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-success"
+                                    disabled={actionBusy}
+                                    onClick={() =>
+                                      handleCurationAction(
+                                        {
+                                          action: 'approve_merge',
+                                          sourceBhajanId: selectedCurationItem.id,
+                                          targetBhajanId: cand.targetBhajanId,
+                                          videoId:
+                                            selectedCurationItem.recordings[0]?.youtubeVideoId,
+                                          saveAliasTitle: selectedCurationItem.title,
+                                        },
+                                        `Merged "${selectedCurationItem.title}" into "${cand.targetTitle}" and saved alias.`,
+                                      )
+                                    }
+                                  >
+                                    Approve Merge &amp; Save Alias
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm"
+                                    disabled={actionBusy}
+                                    onClick={() =>
+                                      handleCurationAction(
+                                        {
+                                          action: 'keep_distinct',
+                                          sourceBhajanId: selectedCurationItem.id,
+                                          candidateBhajanId: cand.targetBhajanId,
+                                        },
+                                        `Recorded "${selectedCurationItem.title}" != "${cand.targetTitle}" in doNotMergePairs.`,
+                                      )
+                                    }
+                                  >
+                                    Keep Distinct
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pitch-grid" style={{ marginBottom: '0.75rem' }}>
+                        <div className="form-field">
+                          <label htmlFor="curate-deity">Deity</label>
+                          <input
+                            id="curate-deity"
+                            type="text"
+                            className="input-control"
+                            value={curatedMeta.deity || ''}
+                            onChange={(e) =>
+                              setCuratedMeta((m) => ({ ...m, deity: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label htmlFor="curate-raga">Raga</label>
+                          <input
+                            id="curate-raga"
+                            type="text"
+                            className="input-control"
+                            value={curatedMeta.ragaName || ''}
+                            onChange={(e) =>
+                              setCuratedMeta((m) => ({ ...m, ragaName: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label htmlFor="curate-beat">Beat / Tala</label>
+                          <input
+                            id="curate-beat"
+                            type="text"
+                            className="input-control"
+                            value={curatedMeta.beat || ''}
+                            onChange={(e) =>
+                              setCuratedMeta((m) => ({ ...m, beat: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label htmlFor="curate-gents">Gents Pitch</label>
+                          <input
+                            id="curate-gents"
+                            type="text"
+                            className="input-control"
+                            value={curatedMeta.gentsPitchRaw || ''}
+                            onChange={(e) =>
+                              setCuratedMeta((m) => ({ ...m, gentsPitchRaw: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label htmlFor="curate-ladies">Ladies Pitch</label>
+                          <input
+                            id="curate-ladies"
+                            type="text"
+                            className="input-control"
+                            value={curatedMeta.ladiesPitchRaw || ''}
+                            onChange={(e) =>
+                              setCuratedMeta((m) => ({ ...m, ladiesPitchRaw: e.target.value }))
+                            }
+                          />
+                        </div>
+                        <div className="form-field">
+                          <label htmlFor="curate-arohanam">Arohanam</label>
+                          <input
+                            id="curate-arohanam"
+                            type="text"
+                            className="input-control"
+                            value={curatedMeta.arohanam || ''}
+                            onChange={(e) =>
+                              setCuratedMeta((m) => ({ ...m, arohanam: e.target.value }))
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-field">
+                        <label htmlFor="curate-lyrics">Curated Lyrics (one verse per line)</label>
+                        <textarea
+                          id="curate-lyrics"
+                          rows={5}
+                          className="textarea-control"
+                          value={curatedLyricsText}
+                          onChange={(e) => setCuratedLyricsText(e.target.value)}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center' }}>
+                        <button
+                          type="button"
+                          className="btn btn-success"
+                          disabled={actionBusy}
+                          onClick={() =>
+                            handleCurationAction(
+                              {
+                                action: 'publish_curated',
+                                bhajanId: selectedCurationItem.id,
+                                lyricsText: curatedLyricsText,
+                                script: curatedScript,
+                                metadata: curatedMeta,
+                              },
+                              `Published curated lyrics & metadata for "${selectedCurationItem.title}".`,
+                            )
+                          }
+                        >
+                          Publish Curated Lyrics &amp; Metadata
+                        </button>
+                        <input
+                          type="text"
+                          aria-label="Reason for excluding non-bhajan"
+                          placeholder="Reason if non-bhajan discourse/promo..."
+                          className="input-control"
+                          style={{ maxWidth: '280px' }}
+                          value={dismissReason}
+                          onChange={(e) => setDismissReason(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          disabled={actionBusy || !dismissReason.trim()}
+                          onClick={() =>
+                            handleCurationAction(
+                              {
+                                action: 'exclude_non_bhajan',
+                                bhajanId: selectedCurationItem.id,
+                                videoId: selectedCurationItem.recordings[0]?.youtubeVideoId,
+                                reason: dismissReason.trim(),
+                              },
+                              `Dismissed "${selectedCurationItem.title}" as non-bhajan.`,
+                            )
+                          }
+                        >
+                          Dismiss Non-Bhajan
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Pipeline Health */}
+          <div
+            role="tabpanel"
+            aria-labelledby="admin-tab-pipeline_health"
+            hidden={activeTab !== 'pipeline_health' ? ('until-found' as unknown as boolean) : false}
+            tabIndex={activeTab === 'pipeline_health' ? 0 : undefined}
+          >
+            <div className="tabpanel-inner">
+              {runsLoading ? (
+                <p className="field-hint">Loading ingestion runs…</p>
+              ) : pipelineRuns.length === 0 ? (
+                <p style={{ color: 'var(--muted)' }}>
+                  No `ingestionRuns` recorded yet. Runs appear automatically after GitHub Actions or CLI syncs publish to Firestore.
+                </p>
+              ) : (
+                <div className="table-wrapper">
+                  <table className="mod-table">
+                    <thead>
+                      <tr>
+                        <th>Run ID</th>
+                        <th>Source</th>
+                        <th>Status</th>
+                        <th>Scanned / Auto / Doubt / New</th>
+                        <th>YouTube Quota / Writes</th>
+                        <th>Started At</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pipelineRuns.map((run) => (
+                        <tr key={run.runId}>
+                          <th>
+                            <code>{run.runId}</code>
+                          </th>
+                          <td>{run.source}</td>
+                          <td>
+                            <span
+                              className={`badge ${
+                                run.status === 'success'
+                                  ? 'badge-verified'
+                                  : run.status === 'partial'
+                                    ? 'badge-pending'
+                                    : ''
+                              }`}
+                            >
+                              {run.status}
+                            </span>
+                          </td>
+                          <td>
+                            {run.itemsScanned} / {run.matchedAuto} / {run.queuedDoubt} /{' '}
+                            {run.createdNew}
+                          </td>
+                          <td>
+                            {run.youtubeQuotaUnitsUsed} units / {run.firestoreWrites} writes
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                            {run.startedAt}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Selected Submission Workbench (Approve or Request Further Information) */}
-        {selected && activeTab !== 'outbox' ? (
+        {selected &&
+        (activeTab === 'pending' ||
+          activeTab === 'info_requested' ||
+          activeTab === 'approved' ||
+          activeTab === 'rejected') ? (
           <section className="card" aria-label="Submission Moderator Inspector">
             <div
               style={{
@@ -770,6 +1349,88 @@ export function AdminModerationClient({
                     onChange={(e) => setEditedLyricsText(e.target.value)}
                   />
                 </div>
+
+                {canModerateSelected && (
+                  <div className="control-box" style={{ marginBottom: '0.85rem' }}>
+                    <div className="control-label" style={{ marginBottom: '0.4rem' }}>
+                      Edit Metadata &amp; Notation Before Approving
+                    </div>
+                    <div className="pitch-grid">
+                      <div className="form-field" style={{ marginBottom: 0 }}>
+                        <label htmlFor="admin-meta-raga">Raga</label>
+                        <input
+                          id="admin-meta-raga"
+                          type="text"
+                          className="input-control"
+                          value={editedMetadata.ragaName || ''}
+                          onChange={(e) =>
+                            setEditedMetadata((m) => ({ ...m, ragaName: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="form-field" style={{ marginBottom: 0 }}>
+                        <label htmlFor="admin-meta-arohanam">Arohanam</label>
+                        <input
+                          id="admin-meta-arohanam"
+                          type="text"
+                          className="input-control"
+                          value={editedMetadata.arohanam || ''}
+                          onChange={(e) =>
+                            setEditedMetadata((m) => ({ ...m, arohanam: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="form-field" style={{ marginBottom: 0 }}>
+                        <label htmlFor="admin-meta-avarohanam">Avarohanam</label>
+                        <input
+                          id="admin-meta-avarohanam"
+                          type="text"
+                          className="input-control"
+                          value={editedMetadata.avarohanam || ''}
+                          onChange={(e) =>
+                            setEditedMetadata((m) => ({ ...m, avarohanam: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="form-field" style={{ marginBottom: 0 }}>
+                        <label htmlFor="admin-meta-sargam">First Line Sargam</label>
+                        <input
+                          id="admin-meta-sargam"
+                          type="text"
+                          className="input-control"
+                          value={editedMetadata.firstLineSargam || ''}
+                          onChange={(e) =>
+                            setEditedMetadata((m) => ({ ...m, firstLineSargam: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="form-field" style={{ marginBottom: 0 }}>
+                        <label htmlFor="admin-meta-gents">Gents Pitch</label>
+                        <input
+                          id="admin-meta-gents"
+                          type="text"
+                          className="input-control"
+                          value={editedMetadata.gentsPitchRaw || ''}
+                          onChange={(e) =>
+                            setEditedMetadata((m) => ({ ...m, gentsPitchRaw: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="form-field" style={{ marginBottom: 0 }}>
+                        <label htmlFor="admin-meta-ladies">Ladies Pitch</label>
+                        <input
+                          id="admin-meta-ladies"
+                          type="text"
+                          className="input-control"
+                          value={editedMetadata.ladiesPitchRaw || ''}
+                          onChange={(e) =>
+                            setEditedMetadata((m) => ({ ...m, ladiesPitchRaw: e.target.value }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="form-field">
                   <label htmlFor="admin-review-note">

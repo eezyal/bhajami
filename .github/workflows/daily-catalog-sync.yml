@@ -1,0 +1,108 @@
+name: Daily bhaJami Cloud Catalog Sync
+
+on:
+  schedule:
+    - cron: '15 6 * * *'
+  workflow_dispatch:
+    inputs:
+      max_songs_per_run:
+        description: 'Max Sai Rhythms detail pages to process per run (default 60)'
+        required: false
+        default: '60'
+        type: string
+
+concurrency:
+  group: daily-catalog-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python crawler dependencies
+        run: python3 -m pip install -r tools/catalog-pipeline/requirements.txt
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node workspace dependencies
+        run: npm ci
+
+      - name: Verify TypeScript/Python Module 0 phonetic parity
+        run: npm run test:phonetics
+
+      - name: Restore Sai Rhythms SQLite checkpoint state
+        uses: actions/cache@v4
+        with:
+          path: tools/catalog-pipeline/crawl_state.sqlite3
+          key: sairhythms-state-${{ github.run_id }}
+          restore-keys: |
+            sairhythms-state-
+
+      - name: Run Cloud Catalog Sync
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          MAX_SONGS: ${{ inputs.max_songs_per_run || '60' }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "FIREBASE_SERVICE_ACCOUNT_JSON secret not configured; skipping cloud sync steps."
+            exit 0
+          fi
+
+          SA_PATH="${{ runner.temp }}/firebase-sa.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$SA_PATH"
+          chmod 600 "$SA_PATH"
+          export GOOGLE_APPLICATION_CREDENTIALS="$SA_PATH"
+
+          echo "Running Sai Rhythms delta slice (max ${MAX_SONGS} songs)..."
+          python3 tools/catalog-pipeline/crawl_sairhythms.py \
+            --delta-only \
+            --max-songs-per-run "$MAX_SONGS" \
+            --publish-firestore \
+            --max-firestore-writes 4000
+
+          if [ -n "$YOUTUBE_API_KEY" ]; then
+            echo "Running incremental YouTube Prasanthi Mandir Live sync..."
+            python3 tools/catalog-pipeline/sync_youtube.py \
+              --source youtube_mandir_live \
+              --incremental \
+              --liveness-check-limit 30 \
+              --publish-firestore \
+              --max-firestore-writes 4000
+
+            echo "Running incremental YouTube Sri Sathya Sai Bhajans sync..."
+            python3 tools/catalog-pipeline/sync_youtube.py \
+              --source youtube_sss_bhajans \
+              --incremental \
+              --liveness-check-limit 30 \
+              --publish-firestore \
+              --max-firestore-writes 4000
+          else
+            echo "YOUTUBE_API_KEY secret not set; skipping YouTube sync steps."
+          fi
+
+          echo "Rebuilding bounded Firestore search shards and catalogMeta/latest..."
+          python3 tools/catalog-pipeline/index_builder.py \
+            --source firestore \
+            --publish-firestore \
+            --max-firestore-writes 4000
+
+      - name: Clean up temporary credentials
+        if: always()
+        run: rm -f "${{ runner.temp }}/firebase-sa.json"

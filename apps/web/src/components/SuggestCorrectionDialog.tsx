@@ -7,11 +7,14 @@ import {
   type AudioSubmissionInfo,
   type Bhajan,
   type LyricCorrection,
+  type MissingFieldKey,
   type ProposedMetadataPatch,
   type SubmissionType,
 } from '@bhajami/shared';
 import { getCurrentFirebaseIdToken } from '@/lib/firebase-client';
 import type { SessionUser } from './AuthDialog';
+
+const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'pschax@gmail.com';
 
 interface SuggestCorrectionDialogProps {
   open: boolean;
@@ -19,6 +22,7 @@ interface SuggestCorrectionDialogProps {
   bhajan: Bhajan;
   activeScriptIndex: number;
   initialMode?: SubmissionType;
+  focusFields?: MissingFieldKey[];
   respondToCorrection?: LyricCorrection | null;
   user: SessionUser | null;
   onSubmitted: () => void;
@@ -53,13 +57,41 @@ const SUBMISSION_OPTIONS: Array<{
 
 const SCRIPT_CHOICES = [
   'Devanagari (Hindi / Sanskrit)',
+  'Sanskrit / Hindi (Roman)',
   'Telugu',
   'Tamil',
   'Kannada',
   'Malayalam',
-  'Roman Transliteration',
+  'Bengali',
+  'Gujarati',
+  'Odia',
+  'Gurmukhi (Punjabi)',
+  'Marathi',
+  'Assamese',
+  'English',
+  'Spanish',
+  'Portuguese',
+  'French',
+  'German',
+  'Italian',
+  'Dutch',
+  'Polish',
+  'Russian (Cyrillic)',
+  'Greek',
+  'Arabic / Urdu',
+  'Japanese',
+  'Chinese',
+  'Korean',
+  'Thai',
+  'Indonesian / Malay',
   'Alternate Choir Variant',
 ];
+
+function hasAuthenticLyrics(bhajan: Bhajan, lines?: string[]): boolean {
+  if (bhajan.lyricsMissing === true) return false;
+  if (!lines || lines.length === 0) return false;
+  return !lines.some((line) => line.includes('awaiting Sai Rhythms'));
+}
 
 export function SuggestCorrectionDialog({
   open,
@@ -67,6 +99,7 @@ export function SuggestCorrectionDialog({
   bhajan,
   activeScriptIndex,
   initialMode = 'lyric_correction',
+  focusFields = [],
   respondToCorrection = null,
   user,
   onSubmitted,
@@ -84,6 +117,12 @@ export function SuggestCorrectionDialog({
   const [deity, setDeity] = useState('');
   const [language, setLanguage] = useState('');
   const [ragaName, setRagaName] = useState('');
+  const [arohanam, setArohanam] = useState('');
+  const [avarohanam, setAvarohanam] = useState('');
+  const [firstLineSargam, setFirstLineSargam] = useState('');
+  const [firstLineWestern, setFirstLineWestern] = useState('');
+  const [notesRange, setNotesRange] = useState('');
+  const [sheetMusicUrl, setSheetMusicUrl] = useState('');
   const [beat, setBeat] = useState('');
   const [tempo, setTempo] = useState('');
   const [gentsPitchRaw, setGentsPitchRaw] = useState('');
@@ -134,7 +173,9 @@ export function SuggestCorrectionDialog({
 
     setMode(initialMode);
     if (initialMode === 'lyric_correction') {
-      setLyricsText((activeSet?.lines || [bhajan.title]).join('\n'));
+      setLyricsText(
+        hasAuthenticLyrics(bhajan, activeSet?.lines) ? (activeSet?.lines || []).join('\n') : '',
+      );
     } else {
       setLyricsText('');
     }
@@ -144,6 +185,12 @@ export function SuggestCorrectionDialog({
     setDeity('');
     setLanguage('');
     setRagaName('');
+    setArohanam('');
+    setAvarohanam('');
+    setFirstLineSargam('');
+    setFirstLineWestern('');
+    setNotesRange('');
+    setSheetMusicUrl('');
     setBeat('');
     setTempo('');
     setGentsPitchRaw('');
@@ -154,14 +201,16 @@ export function SuggestCorrectionDialog({
     setAudioMimeType(undefined);
     setAudioSourceKind('external_url');
     setReasonOrSource('');
-  }, [open, bhajan.id, activeScriptIndex, initialMode, respondToCorrection]);
+  }, [open, bhajan, activeSet, activeScriptIndex, initialMode, respondToCorrection]);
 
   // Adjust lyrics pre-fill when user switches between the 4 radio modes interactively
   const handleModeChange = (nextMode: SubmissionType) => {
     setMode(nextMode);
     setErrorMsg(null);
     if (nextMode === 'lyric_correction') {
-      setLyricsText((activeSet?.lines || [bhajan.title]).join('\n'));
+      setLyricsText(
+        hasAuthenticLyrics(bhajan, activeSet?.lines) ? (activeSet?.lines || []).join('\n') : '',
+      );
     } else if (nextMode === 'alternate_lyrics' || nextMode === 'new_bhajan') {
       setLyricsText('');
     }
@@ -229,9 +278,14 @@ export function SuggestCorrectionDialog({
     [lyricsText],
   );
 
+  const baselineLines = useMemo(
+    () => (hasAuthenticLyrics(bhajan, activeSet?.lines) ? activeSet?.lines || [] : []),
+    [activeSet, bhajan],
+  );
+
   const diffPreview = useMemo(
-    () => computeLyricsDiff(activeSet?.lines || [bhajan.title], proposedLines),
-    [activeSet, bhajan.title, proposedLines],
+    () => computeLyricsDiff(baselineLines, proposedLines),
+    [baselineLines, proposedLines],
   );
 
   const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -288,6 +342,12 @@ export function SuggestCorrectionDialog({
     if (deity.trim()) patch.deity = deity.trim();
     if (language.trim()) patch.language = language.trim();
     if (ragaName.trim()) patch.ragaName = ragaName.trim();
+    if (arohanam.trim()) patch.arohanam = arohanam.trim();
+    if (avarohanam.trim()) patch.avarohanam = avarohanam.trim();
+    if (firstLineSargam.trim()) patch.firstLineSargam = firstLineSargam.trim();
+    if (firstLineWestern.trim()) patch.firstLineWestern = firstLineWestern.trim();
+    if (notesRange.trim()) patch.notesRange = notesRange.trim();
+    if (sheetMusicUrl.trim()) patch.sheetMusicUrl = sheetMusicUrl.trim();
     if (beat.trim()) patch.beat = beat.trim();
     if (tempo.trim()) patch.tempo = tempo.trim();
     if (gentsPitchRaw.trim()) patch.gentsPitchRaw = gentsPitchRaw.trim();
@@ -330,7 +390,7 @@ export function SuggestCorrectionDialog({
 
       setSubmittedInfo({
         id: respondToCorrection.id,
-        to: 'pschax@gmail.com',
+        to: ADMIN_EMAIL,
         transport: 'moderator_requeued',
         message:
           'Your clarification reply has been attached and returned to the Waiting for Approval queue.',
@@ -398,7 +458,7 @@ export function SuggestCorrectionDialog({
 
       setSubmittedInfo({
         id: json.correction.id,
-        to: json.emailNotification?.to || 'pschax@gmail.com',
+        to: json.emailNotification?.to || ADMIN_EMAIL,
         transport: json.emailNotification?.transport || 'local_dev_outbox',
       });
       setSubmitting(false);
@@ -547,7 +607,7 @@ export function SuggestCorrectionDialog({
                 }}
               >
                 <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>
-                  Rejection Reason ({respondToCorrection.reviewedBy || 'pschax@gmail.com'}):
+                  Rejection Reason ({respondToCorrection.reviewedBy || ADMIN_EMAIL}):
                 </div>
                 <div style={{ whiteSpace: 'pre-wrap' }}>{respondToCorrection.reviewNote}</div>
               </div>
@@ -563,7 +623,7 @@ export function SuggestCorrectionDialog({
                 }}
               >
                 <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>
-                  Moderator Question ({respondToCorrection.reviewedBy || 'pschax@gmail.com'}):
+                  Moderator Question ({respondToCorrection.reviewedBy || ADMIN_EMAIL}):
                 </div>
                 <div style={{ whiteSpace: 'pre-wrap' }}>{respondToCorrection.infoRequestNote}</div>
               </div>
@@ -626,6 +686,21 @@ export function SuggestCorrectionDialog({
           </form>
         ) : (
           <form onSubmit={handleSubmit}>
+            {focusFields.length > 0 && (
+              <div
+                className="control-box"
+                style={{
+                  marginBottom: '0.9rem',
+                  borderColor: '#f59e0b',
+                  background: '#fef3c7',
+                  color: '#78350f',
+                  fontSize: '0.84rem',
+                }}
+              >
+                <strong>Help complete missing fields:</strong> {focusFields.join(', ')}
+              </div>
+            )}
+
             <fieldset style={{ border: 0, padding: 0, margin: '0 0 1rem 0' }}>
               <legend className="control-label" style={{ marginBottom: '0.45rem' }}>
                 Choose Contribution Type
@@ -846,49 +921,146 @@ export function SuggestCorrectionDialog({
             </div>
 
             {(mode === 'new_bhajan' || mode === 'metadata_addition') && (
-              <div className="pitch-grid" style={{ marginBottom: '0.6rem' }}>
-                <div className="form-field">
-                  <label htmlFor="corr-beat">Beat / Tala</label>
-                  <input
-                    id="corr-beat"
-                    type="text"
-                    placeholder={
-                      mode === 'new_bhajan'
-                        ? 'e.g., Kaharwa (4/4)'
-                        : bhajan.beat || 'e.g., Kaharwa (4/4)'
-                    }
-                    className="input-control"
-                    value={beat}
-                    onChange={(e) => setBeat(e.target.value)}
-                  />
+              <>
+                <div className="pitch-grid" style={{ marginBottom: '0.6rem' }}>
+                  {mode === 'metadata_addition' && (
+                    <>
+                      <div className="form-field">
+                        <label htmlFor="corr-meta-deity">Deity / Theme</label>
+                        <input
+                          id="corr-meta-deity"
+                          type="text"
+                          placeholder={bhajan.deity || 'e.g., Sai, Ganesha, Shiva'}
+                          className="input-control"
+                          value={deity}
+                          onChange={(e) => setDeity(e.target.value)}
+                        />
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor="corr-meta-lang">Primary Language / Script</label>
+                        <input
+                          id="corr-meta-lang"
+                          type="text"
+                          placeholder={bhajan.language || 'Sanskrit / Hindi'}
+                          className="input-control"
+                          value={language}
+                          onChange={(e) => setLanguage(e.target.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+                  <div className="form-field">
+                    <label htmlFor="corr-beat">Beat / Tala</label>
+                    <input
+                      id="corr-beat"
+                      type="text"
+                      placeholder={
+                        mode === 'new_bhajan'
+                          ? 'e.g., Kaharwa (4/4)'
+                          : bhajan.beat || 'e.g., Kaharwa (4/4)'
+                      }
+                      className="input-control"
+                      value={beat}
+                      onChange={(e) => setBeat(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-tempo">Natural Tempo</label>
+                    <input
+                      id="corr-tempo"
+                      type="text"
+                      placeholder={
+                        mode === 'new_bhajan'
+                          ? 'e.g., Slow / Medium / Fast'
+                          : bhajan.tempo || 'e.g., Slow / Medium / Fast'
+                      }
+                      className="input-control"
+                      value={tempo}
+                      onChange={(e) => setTempo(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-meaning">Meaning / Notes</label>
+                    <input
+                      id="corr-meaning"
+                      type="text"
+                      placeholder="Concise devotional translation..."
+                      className="input-control"
+                      value={meaning}
+                      onChange={(e) => setMeaning(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="form-field">
-                  <label htmlFor="corr-tempo">Natural Tempo</label>
-                  <input
-                    id="corr-tempo"
-                    type="text"
-                    placeholder={
-                      mode === 'new_bhajan'
-                        ? 'e.g., Slow / Medium / Fast'
-                        : bhajan.tempo || 'e.g., Slow / Medium / Fast'
-                    }
-                    className="input-control"
-                    value={tempo}
-                    onChange={(e) => setTempo(e.target.value)}
-                  />
+
+                <div className="pitch-grid" style={{ marginBottom: '0.6rem' }}>
+                  <div className="form-field">
+                    <label htmlFor="corr-arohanam">Arohanam</label>
+                    <input
+                      id="corr-arohanam"
+                      type="text"
+                      placeholder={bhajan.raga?.arohanam || 'e.g., S R2 G3 P D2 S'}
+                      className="input-control"
+                      value={arohanam}
+                      onChange={(e) => setArohanam(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-avarohanam">Avarohanam</label>
+                    <input
+                      id="corr-avarohanam"
+                      type="text"
+                      placeholder={bhajan.raga?.avarohanam || 'e.g., S D2 P G3 R2 S'}
+                      className="input-control"
+                      value={avarohanam}
+                      onChange={(e) => setAvarohanam(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-first-sargam">First Line Sargam</label>
+                    <input
+                      id="corr-first-sargam"
+                      type="text"
+                      placeholder={bhajan.firstLineNotes?.sargam || 'e.g., S R G P...'}
+                      className="input-control"
+                      value={firstLineSargam}
+                      onChange={(e) => setFirstLineSargam(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-first-western">First Line Western (Key of C)</label>
+                    <input
+                      id="corr-first-western"
+                      type="text"
+                      placeholder={bhajan.firstLineNotes?.westernInC || 'e.g., C D E G...'}
+                      className="input-control"
+                      value={firstLineWestern}
+                      onChange={(e) => setFirstLineWestern(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-notes-range">Notes Range</label>
+                    <input
+                      id="corr-notes-range"
+                      type="text"
+                      placeholder={bhajan.notesRange || 'e.g., Lowest S / C · Highest G2 / E'}
+                      className="input-control"
+                      value={notesRange}
+                      onChange={(e) => setNotesRange(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label htmlFor="corr-sheet-url">Sheet Music URL</label>
+                    <input
+                      id="corr-sheet-url"
+                      type="url"
+                      placeholder={bhajan.sheetMusicUrl || 'https://...'}
+                      className="input-control"
+                      value={sheetMusicUrl}
+                      onChange={(e) => setSheetMusicUrl(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="form-field">
-                  <label htmlFor="corr-meaning">Meaning / Notes</label>
-                  <input
-                    id="corr-meaning"
-                    type="text"
-                    placeholder="Concise devotional translation..."
-                    className="input-control"
-                    value={meaning}
-                    onChange={(e) => setMeaning(e.target.value)}
-                  />
-                </div>
-              </div>
+              </>
             )}
 
             <div className="form-field">

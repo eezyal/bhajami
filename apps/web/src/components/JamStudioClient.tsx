@@ -5,11 +5,13 @@ import Link from 'next/link';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import {
+  getMissingBhajanFields,
   transposePitch,
   type Bhajan,
   type CatalogIndexPayload,
   type CatalogStats,
   type LyricCorrection,
+  type MissingFieldKey,
   type SubmissionType,
 } from '@bhajami/shared';
 import {
@@ -99,6 +101,7 @@ export function JamStudioClient({
   const [authOpen, setAuthOpen] = useState(false);
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [correctionMode, setCorrectionMode] = useState<SubmissionType>('lyric_correction');
+  const [focusFields, setFocusFields] = useState<MissingFieldKey[]>([]);
   const [respondToCorrection, setRespondToCorrection] = useState<LyricCorrection | null>(null);
   const [projectorOpen, setProjectorOpen] = useState(false);
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -440,14 +443,30 @@ export function JamStudioClient({
     }
   };
 
-  const openContributionModal = (nextMode: SubmissionType) => {
+  const openContributionModal = (
+    nextMode: SubmissionType,
+    nextFocusFields: MissingFieldKey[] = [],
+  ) => {
     if (cloudMode && (!user || user.provider === 'guest')) {
       setAuthOpen(true);
       return;
     }
     setRespondToCorrection(null);
+    setFocusFields(nextFocusFields);
     setCorrectionMode(nextMode);
     setCorrectionOpen(true);
+  };
+
+  const missingFields = useMemo(
+    () => (activeBhajan ? getMissingBhajanFields(activeBhajan) : []),
+    [activeBhajan],
+  );
+
+  const openMissingMetadataModal = () => {
+    const targetMode: SubmissionType = missingFields.includes('lyrics')
+      ? 'lyric_correction'
+      : 'metadata_addition';
+    openContributionModal(targetMode, missingFields);
   };
 
   return (
@@ -640,6 +659,16 @@ export function JamStudioClient({
                   </div>
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    {missingFields.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-warn"
+                        onClick={openMissingMetadataModal}
+                        title={`Missing fields: ${missingFields.join(', ')}`}
+                      >
+                        Complete Missing Metadata ({missingFields.length})
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn-primary"
@@ -663,6 +692,11 @@ export function JamStudioClient({
                     </button>
                   </div>
                 </div>
+                {missingFields.length > 0 && (
+                  <p style={{ margin: '0.5rem 0 0', fontSize: '0.78rem', color: 'var(--muted)' }}>
+                    Missing metadata: <strong>{missingFields.join(', ')}</strong>
+                  </p>
+                )}
 
                 {/* Pitch / Shruti / Recording Console */}
                 <div className="pitch-grid" style={{ marginTop: '1rem' }}>
@@ -1036,7 +1070,7 @@ export function JamStudioClient({
                   <div className="tabpanel-inner">
                     <p style={{ marginTop: 0 }}>
                       {activeBhajan.meaning ||
-                        'English meaning not yet added. You can contribute it via Suggest Lyrics Correction.'}
+                        'English meaning not yet added. Use Complete Missing Metadata or Contribute / Suggest to add it.'}
                     </p>
                     <p style={{ fontSize: '0.84rem', color: 'var(--muted)', marginBottom: 0 }}>
                       <strong>Attribution:</strong>{' '}
@@ -1121,11 +1155,13 @@ export function JamStudioClient({
           open={correctionOpen}
           onClose={() => {
             setCorrectionOpen(false);
+            setFocusFields([]);
             setRespondToCorrection(null);
           }}
           bhajan={activeBhajan}
           activeScriptIndex={activeScriptIdx}
           initialMode={correctionMode}
+          focusFields={focusFields}
           respondToCorrection={respondToCorrection}
           user={user}
           onSubmitted={refreshCatalog}

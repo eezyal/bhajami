@@ -454,6 +454,12 @@ function applyOverridesToBhajans(
   });
 }
 
+function readLocalDeletedBhajanIds(): Set<string> {
+  if (hasCloudConfig()) return new Set();
+  const deleted = readJsonFile<string[]>(getStorePath('curation-deleted-ids.json'), []);
+  return new Set(deleted);
+}
+
 export function getMergedCatalog(): {
   catalog: CatalogPayload;
   pendingCount: number;
@@ -463,8 +469,11 @@ export function getMergedCatalog(): {
   const overrides = readJsonFile<Record<string, ApprovedOverride>>(getStorePath('approved-overrides.json'), {});
   const newBhajans = readJsonFile<Bhajan[]>(getStorePath('approved-new-bhajans.json'), []);
   const corrections = readJsonFile<LyricCorrection[]>(getStorePath('corrections-store.json'), []);
+  const deletedIds = readLocalDeletedBhajanIds();
 
-  const mergedBhajans = applyOverridesToBhajans(raw.bhajans, overrides, newBhajans);
+  const mergedBhajans = applyOverridesToBhajans(raw.bhajans, overrides, newBhajans).filter(
+    (b) => !deletedIds.has(b.id),
+  );
   const pendingCount = corrections.filter(
     (c) => c.status === 'pending' || c.status === 'info_requested',
   ).length;
@@ -813,6 +822,9 @@ export async function getBhajanDetail(id: string): Promise<Bhajan | null> {
     }
     return baseMatch ? sanitizeBhajanForEnv(baseMatch) : null;
   }
+
+  const deletedIds = readLocalDeletedBhajanIds();
+  if (deletedIds.has(cleanId)) return null;
 
   const { catalog } = getMergedCatalog();
   const localMatch =

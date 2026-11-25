@@ -1,21 +1,26 @@
 ---
 name: lyrics-moderation
-description: Manages community lyric & metadata corrections, pschax@gmail.com admin diff emails, and the /admin/corrections approval workflow.
+description: Manages community lyric & notation corrections, /admin/corrections Daily Curation Queue, /api/admin/curation transactions, entityAliases, and doNotMergePairs.
 ---
 
-# bhaJami Lyrics Correction & Admin Moderation Workflow
+# bhaJami Community Moderation & Daily Curation Workflow
 
-## Data Collections & Local Fallback Stores
-- **Firestore**: `lyricCorrections/{id}`, `bhajans/{id}`, `bhajans/{id}/revisions/{revId}`, `mail/{mailId}`
-- **Local Dev JSON Stores** (`apps/web/data/`): `corrections-store.json`, `approved-overrides.json`, `revisions-store.json`, `email-outbox.json`
+## Data Collections
+- **Firestore**: `bhajans/{id}`, `bhajans/{id}/revisions/{revId}`, `lyricCorrections/{id}`, `entityAliases/{aliasKey}`, `doNotMergePairs/{pairKey}`, `youtubeVideos/{videoId}`, `catalogIndexShards/{shardId}`, `catalogMeta/latest`, `ingestionRuns/{runId}`, `syncState/{source}`, `mail/{mailId}`.
+- **Local Fallback Store** (`apps/web/data/` when cloud config is disabled): `corrections-store.json`, `approved-overrides.json`, `approved-new-bhajans.json`, `revisions-store.json`, `email-outbox.json`, `curation-*.json`.
 
-## Email Delivery to `pschax@gmail.com`
-Every `POST /api/corrections` builds a rich HTML + plain-text LCS diff email addressed to `pschax@gmail.com` (`ADMIN_EMAIL`) and dispatches via:
-1. **Resend API** (when `RESEND_API_KEY` is configured),
-2. **Firebase Trigger Email (`mail` collection)** (when Firebase Admin SDK credentials are configured), and
-3. **Local Dev Email Outbox** (`data/email-outbox.json`), visible live in `/admin/corrections` under the **Admin Email Outbox** tab.
+## Contributor Flow (`SuggestCorrectionDialog.tsx` + `JamStudioClient.tsx`)
+- Requires non-anonymous Firebase sign-in in cloud mode.
+- Surfaces contextual **`Complete Missing Metadata`** CTA computed from `getMissingBhajanFields(bhajan)`.
+- Supports all 28 script choices and full notation fields (`arohanam`, `avarohanam`, `firstLineSargam`, `firstLineWestern`, `notesRange`, `sheetMusicUrl`).
 
-## Moderation Lifecycle
-- User submission sets `status: 'pending'` (appears under **Waiting for Approval**).
-- Admin inspects LCS diff at `/admin/corrections`, can refine the proposed lyrics before publishing, and clicks **Approve & Publish** (`PATCH /api/corrections/[id]`) or **Reject**.
-- Approval atomically updates published lyrics overrides and appends an immutable `BhajanRevision` record.
+## Admin Moderation & Daily Curation (`/admin/corrections`)
+- Requires Firebase Admin token (`verifyAdminBearerToken`, defaulting admin email via `NEXT_PUBLIC_ADMIN_EMAIL`).
+- **Moderation Tabs** (`PATCH /api/corrections/[id]`): edit lyrics and `editedMetadata` notation before approving; **`Request Further Information`** or **`Reject Submission`** (requires reason + sends proposer follow-up reply link).
+- **Daily Curation Workbench** (`/api/admin/curation`):
+  - Views: `missing_lyrics`, `needs_verification`, `ambiguous_long`, and `runs` (Pipeline Health).
+  - Embeds visible `YouTubeSegmentPlayer` (`>= 320x180px`, `Watch on YouTube` fallback).
+  - **`Approve Merge & Save Alias`**: transactionally moves recordings/slugAliases, hides merged stub, and writes `entityAliases`.
+  - **`Keep Distinct`**: writes `doNotMergePairs/{sortedA}__${sortedB}` and clears candidate ambiguity.
+  - **`Publish Curated Lyrics & Metadata`**: writes `bhajamiOverride: true`, clears `lyricsMissing`, appends `BhajanRevision`.
+  - **`Dismiss Non-Bhajan`**: requires reason, excludes `youtubeVideos/{videoId}`, and removes stub.
