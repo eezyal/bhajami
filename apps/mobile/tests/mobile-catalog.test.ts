@@ -10,6 +10,7 @@ import {
   buildYouTubeWatchUrl,
   cleanYouTubeDisplayTitle,
   filterBhajanIndexEntries,
+  resolveDefaultApiBase,
   resolvePlaybackAction,
 } from '../src/lib/search-and-playback';
 import { canonicalizePhrase, type BhajanIndexEntry } from '@bhajami/shared';
@@ -241,4 +242,29 @@ test('filterBhajanIndexEntries supports phonetic Sanskrit search and resolvePlay
     kind: 'audio',
     uri: 'http://localhost:3000/api/local-audio?id=mp3_1',
   });
+});
+
+test('resolveDefaultApiBase selects env override, Web LAN host, Expo Go bundle host, or simulator default', () => {
+  assert.equal(
+    resolveDefaultApiBase({
+      envBaseUrl: 'http://192.168.1.50:4000/',
+      webHostname: '192.168.86.29',
+      bundleScriptUrl: 'http://192.168.86.29:8081/node_modules/expo/AppEntry.bundle',
+      platformOs: 'ios',
+    }),
+    'http://192.168.1.50:4000',
+  );
+  assert.equal(
+    resolveDefaultApiBase({ webHostname: '192.168.86.29', platformOs: 'web' }),
+    'http://192.168.86.29:3000',
+  );
+  assert.equal(
+    resolveDefaultApiBase({
+      bundleScriptUrl: 'http://192.168.86.29:8081/node_modules/expo/AppEntry.bundle?platform=ios',
+      platformOs: 'ios',
+    }),
+    'http://192.168.86.29:3000',
+  );
+  assert.equal(resolveDefaultApiBase({ platformOs: 'android' }), 'http://10.0.2.2:3000');
+  assert.equal(resolveDefaultApiBase({ platformOs: 'ios' }), 'http://localhost:3000');
 });

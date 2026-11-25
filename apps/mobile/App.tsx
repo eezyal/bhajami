@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Modal,
+  NativeModules,
   Platform,
   Pressable,
   SafeAreaView,
@@ -53,13 +54,24 @@ import {
 import {
   filterBhajanIndexEntries,
   formatMetadataSourceBadge,
+  resolveDefaultApiBase,
   resolvePlaybackAction,
 } from './src/lib/search-and-playback';
 
 type AppTab = 'home' | 'stream' | 'studio' | 'liked';
 
-const DEFAULT_API_BASE =
-  Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+const DEFAULT_API_BASE = resolveDefaultApiBase({
+  envBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
+  webHostname:
+    typeof globalThis !== 'undefined' && 'location' in globalThis
+      ? (globalThis as { location?: { hostname?: string } }).location?.hostname
+      : undefined,
+  bundleScriptUrl:
+    typeof NativeModules?.SourceCode?.scriptURL === 'string'
+      ? NativeModules.SourceCode.scriptURL
+      : undefined,
+  platformOs: Platform.OS,
+});
 const MIN_LIKES_FOR_YOU = 3;
 
 interface ThemePalette {

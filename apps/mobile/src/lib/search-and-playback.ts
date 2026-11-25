@@ -206,3 +206,34 @@ export function formatMetadataSourceBadge(source?: BhajanMetadataSource | string
       return { label: 'Community', verified: false };
   }
 }
+
+/**
+ * Resolves the default backend API base URL so Expo Web and native Expo Go clients running over
+ * Wi-Fi automatically target the Mac's LAN IP (`:3000`) instead of looping back to `localhost`.
+ */
+export function resolveDefaultApiBase(params: {
+  envBaseUrl?: string;
+  webHostname?: string;
+  bundleScriptUrl?: string;
+  platformOs: string;
+  port?: number;
+}): string {
+  const port = params.port ?? 3000;
+  const cleanEnv = params.envBaseUrl?.trim().replace(/\/+$/, '');
+  if (cleanEnv) {
+    return cleanEnv;
+  }
+
+  if (params.platformOs === 'web' && params.webHostname?.trim()) {
+    return `http://${params.webHostname.trim()}:${port}`;
+  }
+
+  const bundleHostMatch = params.bundleScriptUrl?.match(/^https?:\/\/([^:/?#]+)/i);
+  if (bundleHostMatch?.[1]) {
+    return `http://${bundleHostMatch[1]}:${port}`;
+  }
+
+  return params.platformOs === 'android'
+    ? `http://10.0.2.2:${port}`
+    : `http://localhost:${port}`;
+}
