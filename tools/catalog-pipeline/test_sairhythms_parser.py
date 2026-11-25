@@ -197,6 +197,102 @@ class SaiRhythmsParserTests(unittest.TestCase):
         self.assertEqual(slugs, ["aao-aao-nandalala", "arunachala-shiva"])
         self.assertEqual(children, ["https://sairhythms.sathyasai.org/sitemap-2.xml"])
 
+    def test_extract_listing_html_and_incremental_discovery_advances(self) -> None:
+        page0_html = """
+        <html><body>
+          <a href="/song/glossary">Glossary</a>
+          <a href="/song/tags/prayers">Prayers</a>
+          <a href="/song/aao-aao-nandalala">Aao Aao Nandalala</a>
+          <a href="/song/arunachala-shiva">Arunachala Shiva</a>
+          <a href="/song/tags/sheet-music?page=1">Next</a>
+          <a href="/song/tags/sheet-music?page=2">Last</a>
+        </body></html>
+        """
+        page1_html = """
+        <html><body>
+          <a href="/song/gajanana-hey-gajanana">Gajanana Hey Gajanana</a>
+          <a href="/song/guru-deva-guru-govinda">Guru Deva Guru Govinda</a>
+          <a href="/song/tags/sheet-music?page=2">Last</a>
+        </body></html>
+        """
+        slugs0, max_p = crawler.extract_song_slugs_from_listing_html(page0_html)
+        self.assertEqual(slugs0, ["aao-aao-nandalala", "arunachala-shiva"])
+        self.assertEqual(max_p, 2)
+
+        def fake_fetch(url: str):
+            if url.endswith("/song/tags/sheet-music"):
+                return 200, page0_html, {}
+            if url.endswith("/song/tags/sheet-music?page=1"):
+                return 200, page1_html, {}
+            raise crawler.urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = crawler.CrawlStateDB(Path(tmpdir) / "state.sqlite3")
+            with mock.patch.object(crawler, "enforce_crawl_delay", return_value=1.0):
+                batch1, _, fetched1 = crawler.discover_slugs_incrementally(
+                    db,
+                    needed_count=2,
+                    sources=("/song/tags/missing", "/song/tags/sheet-music"),
+                    fetch_fn=fake_fetch,
+                )
+                self.assertEqual(fetched1, 1)
+                self.assertEqual(batch1, ["aao-aao-nandalala", "arunachala-shiva"])
+
+                # Simulate Run 1 syncing those 2 songs
+                for s in batch1:
+                    db.upsert_slug(
+                        slug=s,
+                        url=f"https://sairhythms.sathyasai.org/song/{s}",
+                        status="synced",
+                        firestore_synced_at="2026-11-24T18:45:00Z",
+                    )
+
+                batch2, _, fetched2 = crawler.discover_slugs_incrementally(
+                    db,
+                    needed_count=2,
+                    sources=("/song/tags/missing", "/song/tags/sheet-music"),
+                    fetch_fn=fake_fetch,
+                )
+                self.assertEqual(fetched2, 1)
+                self.assertEqual(batch2, ["gajanana-hey-gajanana", "guru-deva-guru-govinda"])
+            db.close()
+
+    def test_delta_only_filters_synced_slugs_before_max_songs_per_run_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            cache_dir = tmp / ".cache"
+            state_db = tmp / "state.sqlite3"
+            audit_log = tmp / "audit.jsonl"
+
+            crawler.write_cached_html(cache_dir, "song-one-synced", FIXTURE_HTML)
+            crawler.write_cached_html(cache_dir, "song-two-unsynced", FIXTURE_HTML)
+
+            db = crawler.CrawlStateDB(state_db)
+            db.upsert_slug(
+                slug="song-one-synced",
+                url="https://sairhythms.sathyasai.org/song/song-one-synced",
+                status="synced",
+                firestore_synced_at="2026-11-24T18:45:00Z",
+            )
+            db.close()
+
+            parsed_out = tmp / "parsed.json"
+            summary = crawler.run_crawler(
+                slugs=["song-one-synced", "song-two-unsynced"],
+                reparse_cache=True,
+                delta_only=True,
+                max_songs_per_run=1,
+                cache_dir=cache_dir,
+                state_db_path=state_db,
+                audit_log_path=audit_log,
+                parsed_out=parsed_out,
+            )
+            self.assertEqual(summary["skippedUnchanged"], 1)
+            self.assertEqual(summary["targetSlugs"], 1)
+            self.assertEqual(summary["parsedCount"], 1)
+            parsed_data = json.loads(parsed_out.read_text(encoding="utf-8"))
+            self.assertEqual([b["slug"] for b in parsed_data["bhajans"]], ["song-two-unsynced"])
+
 
 class IndexBuilderAndCleanupTests(unittest.TestCase):
     def test_pack_index_shards_stays_strictly_under_350kb_with_600_entries(self) -> None:

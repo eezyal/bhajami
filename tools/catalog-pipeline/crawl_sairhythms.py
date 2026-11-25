@@ -49,6 +49,57 @@ DEFAULT_STATE_DB = SCRIPT_DIR / "crawl_state.sqlite3"
 DEFAULT_AUDIT_LOG = SCRIPT_DIR / "crawl_audit.jsonl"
 DEFAULT_SEEDS_OUT = SHARED_DATA_DIR / "glossary-variant-seeds.json"
 
+NON_SONG_SLUGS = frozenset(
+    {
+        "glossary",
+        "signup",
+        "slides",
+        "submit-new-song",
+        "tags",
+        "sheet_music",
+        "api",
+        "deity",
+        "level",
+        "tempo",
+        "language",
+        "raga",
+        "beat",
+    }
+)
+
+DEFAULT_DISCOVERY_SOURCES: tuple[str, ...] = (
+    "/song/tags/sheet-music",
+    "/song/deity/sai",
+    "/song/deity/ganesha",
+    "/song/deity/krishna",
+    "/song/deity/shiva",
+    "/song/deity/devi",
+    "/song/deity/rama",
+    "/song/deity/guru",
+    "/song/deity/anjaneya",
+    "/song/deity/narayana",
+    "/song/deity/sarva-dharma",
+    "/song/deity/subrahmanya",
+    "/song/deity/vittala",
+    "/song/deity/gayathri",
+    "/song/deity/ayyappa",
+    "/song/deity/narasimha",
+    "/song/deity/surya",
+    "/song/deity/allah",
+    "/song/deity/buddha",
+    "/song/deity/jesus",
+    "/song/deity/jehovah",
+    "/song/level/simple",
+    "/song/level/intermediate",
+    "/song/level/advanced",
+    "/song/tempo/medium",
+    "/song/tempo/medium-fast",
+    "/song/tempo/fast",
+    "/song/tempo/medium-slow",
+    "/song/tempo/slow",
+    "/song/tags/prayers",
+)
+
 CHROMATIC_STEPS: list[tuple[int, str, str]] = [
     (0, "1 Pancham", "C"),
     (1, "1.5 Pancham", "C# / Db"),
@@ -712,9 +763,75 @@ class CrawlStateDB:
                 firestore_writes INTEGER DEFAULT 0,
                 error_count INTEGER DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS discovery_sources (
+                source_path TEXT PRIMARY KEY,
+                next_page INTEGER NOT NULL DEFAULT 0,
+                max_page INTEGER,
+                completed INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT
+            );
             """
         )
         self.conn.commit()
+
+    def seed_discovery_sources(self, sources: Iterable[str]) -> None:
+        now = utc_now_iso()
+        for src in sources:
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO discovery_sources (source_path, next_page, completed, updated_at)
+                VALUES (?, 0, 0, ?)
+                """,
+                (src, now),
+            )
+        self.conn.commit()
+
+    def get_next_discovery_source(self) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM discovery_sources WHERE completed = 0 ORDER BY rowid ASC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_discovery_source(
+        self,
+        source_path: str,
+        *,
+        next_page: int,
+        max_page: int | None,
+        completed: bool,
+    ) -> None:
+        self.conn.execute(
+            """
+            UPDATE discovery_sources
+            SET next_page = ?, max_page = ?, completed = ?, updated_at = ?
+            WHERE source_path = ?
+            """,
+            (next_page, max_page, 1 if completed else 0, utc_now_iso(), source_path),
+        )
+        self.conn.commit()
+
+    def register_discovered_slug(self, slug: str, url: str) -> bool:
+        cur = self.conn.execute(
+            """
+            INSERT OR IGNORE INTO slugs (slug, url, status)
+            VALUES (?, ?, 'discovered')
+            """,
+            (slug, url),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def list_unsynced_slugs(self, limit: int = 0) -> list[str]:
+        sql = (
+            "SELECT slug FROM slugs "
+            "WHERE status NOT IN ('synced', 'non_song') AND firestore_synced_at IS NULL "
+            "ORDER BY rowid ASC"
+        )
+        if limit > 0:
+            rows = self.conn.execute(f"{sql} LIMIT ?", (limit,)).fetchall()
+        else:
+            rows = self.conn.execute(sql).fetchall()
+        return [str(r["slug"]) for r in rows]
 
     def get_slug(self, slug: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM slugs WHERE slug = ?", (slug,)).fetchone()
@@ -853,6 +970,110 @@ def _fetch_url_text(
         raise
 
 
+def extract_song_slugs_from_listing_html(html: str) -> tuple[list[str], int | None]:
+    """Extract unique `/song/<slug>` entries and max pager page index from a listing page."""
+    soup = make_soup(html)
+    slugs: list[str] = []
+    seen_slugs: set[str] = set()
+    max_page: int | None = None
+
+    for anchor in soup.find_all("a", href=True):
+        href = str(anchor["href"]).strip()
+        if not href:
+            continue
+        parsed = urllib.parse.urlparse(href)
+        path_parts = [p for p in parsed.path.strip("/").split("/") if p]
+        if len(path_parts) == 2 and path_parts[0] == "song":
+            slug = path_parts[1]
+            if (
+                slug not in NON_SONG_SLUGS
+                and re.match(r"^[a-z0-9][a-z0-9-]+$", slug)
+                and slug not in seen_slugs
+            ):
+                seen_slugs.add(slug)
+                slugs.append(slug)
+
+        if parsed.query:
+            qs = urllib.parse.parse_qs(parsed.query)
+            if "page" in qs and qs["page"]:
+                try:
+                    page_num = int(qs["page"][0])
+                    if max_page is None or page_num > max_page:
+                        max_page = page_num
+                except ValueError:
+                    pass
+
+    return slugs, max_page
+
+
+def discover_slugs_incrementally(
+    db: CrawlStateDB,
+    *,
+    needed_count: int,
+    delay_sec: float = MIN_CRAWL_DELAY_SEC,
+    last_fetch_ts: float | None = None,
+    sources: Iterable[str] = DEFAULT_DISCOVERY_SOURCES,
+    fetch_fn: Callable[..., tuple[int, str | None, dict[str, str]]] | None = None,
+) -> tuple[list[str], float | None, int]:
+    """Politely page through public Sai Rhythms directories until `needed_count` unsynced slugs exist."""
+    fetcher = fetch_fn or _fetch_url_text
+    db.seed_discovery_sources(sources)
+    unsynced = db.list_unsynced_slugs(limit=needed_count)
+    pages_fetched = 0
+
+    while needed_count == 0 or len(unsynced) < needed_count:
+        src = db.get_next_discovery_source()
+        if src is None:
+            break
+        source_path = str(src["source_path"])
+        next_page = int(src["next_page"] or 0)
+        url = f"{BASE_URL}{source_path}" if next_page == 0 else f"{BASE_URL}{source_path}?page={next_page}"
+
+        last_fetch_ts = enforce_crawl_delay(last_fetch_ts, delay_sec)
+        try:
+            status_code, body, _ = fetcher(url)
+        except urllib.error.HTTPError as err:
+            if err.code == 404:
+                db.update_discovery_source(
+                    source_path,
+                    next_page=next_page + 1,
+                    max_page=src.get("max_page"),
+                    completed=True,
+                )
+                continue
+            break
+        except (urllib.error.URLError, TimeoutError, OSError):
+            break
+
+        pages_fetched += 1
+        if status_code != 200 or not body:
+            db.update_discovery_source(
+                source_path,
+                next_page=next_page + 1,
+                max_page=src.get("max_page"),
+                completed=True,
+            )
+            continue
+
+        page_slugs, page_max = extract_song_slugs_from_listing_html(body)
+        for slug in page_slugs:
+            db.register_discovered_slug(slug, f"{BASE_URL}/song/{slug}")
+
+        known_max_candidates = [m for m in (src.get("max_page"), page_max) if m is not None]
+        resolved_max = max(known_max_candidates) if known_max_candidates else None
+        advanced_page = next_page + 1
+        completed = (len(page_slugs) == 0) or (resolved_max is None) or (advanced_page > resolved_max)
+        db.update_discovery_source(
+            source_path,
+            next_page=advanced_page,
+            max_page=resolved_max,
+            completed=completed,
+        )
+        unsynced = db.list_unsynced_slugs(limit=needed_count)
+
+    return unsynced, last_fetch_ts, pages_fetched
+
+
 def discover_slugs_from_sitemap(
     *,
     sitemap_url: str = SITEMAP_URL,
@@ -960,23 +1181,53 @@ def run_crawler(
     effective_delay = max(float(delay_sec), MIN_CRAWL_DELAY_SEC)
     db = CrawlStateDB(state_db_path)
     phonetic_cfg = load_phonetic_config()
+    last_fetch_ts: float | None = None
+    discovery_pages_fetched = 0
+    skipped_synced = 0
+
     target_slugs = list(slugs or [])
     if not target_slugs:
         if reparse_cache:
             target_slugs = discover_cached_slugs(cache_dir)
+            if delta_only:
+                unsynced: list[str] = []
+                for s in target_slugs:
+                    row = db.get_slug(s)
+                    if row and (row.get("status") == "synced" or row.get("firestore_synced_at")):
+                        skipped_synced += 1
+                    else:
+                        unsynced.append(s)
+                target_slugs = unsynced
+            if max_songs_per_run > 0:
+                target_slugs = target_slugs[:max_songs_per_run]
         else:
-            target_slugs = discover_slugs_from_sitemap(delay_sec=effective_delay)
-
-    if max_songs_per_run > 0:
-        target_slugs = target_slugs[:max_songs_per_run]
+            target_slugs, last_fetch_ts, discovery_pages_fetched = discover_slugs_incrementally(
+                db,
+                needed_count=max_songs_per_run,
+                delay_sec=effective_delay,
+                last_fetch_ts=last_fetch_ts,
+            )
+    else:
+        if delta_only:
+            unsynced = []
+            for s in target_slugs:
+                row = db.get_slug(s)
+                if row and (row.get("status") == "synced" or row.get("firestore_synced_at")):
+                    skipped_synced += 1
+                else:
+                    unsynced.append(s)
+            target_slugs = unsynced
+        if max_songs_per_run > 0:
+            target_slugs = target_slugs[:max_songs_per_run]
 
     stats = {
         "mode": "reparse_cache" if reparse_cache else "network_crawl",
         "dryRun": not publish_firestore,
         "targetSlugs": len(target_slugs),
+        "discoveryPagesFetched": discovery_pages_fetched,
         "fetchedCount": 0,
         "cacheHitCount": 0,
-        "skippedUnchanged": 0,
+        "skippedUnchanged": skipped_synced,
         "parsedCount": 0,
         "nonSongSkipped": 0,
         "firestoreWrites": 0,
@@ -989,7 +1240,6 @@ def run_crawler(
 
     parsed_docs: list[dict[str, Any]] = []
     all_var_seeds: list[dict[str, Any]] = []
-    last_fetch_ts: float | None = None
     audit_log_path.parent.mkdir(parents=True, exist_ok=True)
     fs_client = _init_firestore_client() if publish_firestore else None
 
