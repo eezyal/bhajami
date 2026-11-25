@@ -395,6 +395,19 @@ def _init_firestore_client():
     return firestore.client()
 
 
+def _hydrate_firestore_bhajan_doc(
+    doc_id: str,
+    raw: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Ensure Firestore document ID populates missing `id`/`slug` on legacy records."""
+    doc = dict(raw or {})
+    if not str(doc.get("id") or "").strip():
+        doc["id"] = doc_id
+    if not str(doc.get("slug") or "").strip():
+        doc["slug"] = doc_id
+    return doc
+
+
 def build_index(
     *,
     source: str = "json",
@@ -410,7 +423,11 @@ def build_index(
     fs_client = _init_firestore_client() if (source == "firestore" or publish_firestore) else None
 
     if source == "firestore":
-        bhajans = [snap.to_dict() for snap in fs_client.collection("bhajans").stream() if snap.exists]
+        bhajans = [
+            _hydrate_firestore_bhajan_doc(snap.id, snap.to_dict())
+            for snap in fs_client.collection("bhajans").stream()
+            if snap.exists
+        ]
     else:
         raw = json.loads(input_path.read_text(encoding="utf-8"))
         bhajans = list(raw.get("bhajans", []))

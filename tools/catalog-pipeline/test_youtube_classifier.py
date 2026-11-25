@@ -200,12 +200,16 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         self.assertEqual(entry["recordingCount"], 1)
         self.assertGreater(len(entry["phoneticTokens"]), 0)
 
-        legacy_yt = {
-            "id": "legacy-shiva",
-            "title": "Shiva Shiva Shiva",
-            "youtubeId": "abc123XYZ",
-        }
+        legacy_yt = index_builder._hydrate_firestore_bhajan_doc(
+            "012qw0EPVRnPDXiUWepc",
+            {
+                "title": "160 - Shankara Shankara Sada Shiva | Radio Sai Bhajans",
+                "youtubeId": "abc123XYZ",
+            },
+        )
         legacy_entry = index_builder.project_bhajan_to_index_entry(legacy_yt)
+        self.assertEqual(legacy_entry["id"], "012qw0EPVRnPDXiUWepc")
+        self.assertEqual(legacy_entry["slug"], "012qw0EPVRnPDXiUWepc")
         self.assertEqual(legacy_entry["recordingCount"], 1)
         self.assertEqual(legacy_entry["metadataSource"], "youtube_channel")
         stats = index_builder.compute_catalog_stats([stub, legacy_yt])

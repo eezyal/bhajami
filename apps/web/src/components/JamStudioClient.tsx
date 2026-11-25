@@ -140,6 +140,7 @@ export function JamStudioClient({
   );
   const [streamIdx, setStreamIdx] = useState(0);
   const [streamAutoPlay, setStreamAutoPlay] = useState(true);
+  const [streamLoadingDetail, setStreamLoadingDetail] = useState(false);
   const [likedRagaFilter, setLikedRagaFilter] = useState<string>('');
   const [homeQuery, setHomeQuery] = useState('');
 
@@ -416,17 +417,25 @@ export function JamStudioClient({
 
   useEffect(() => {
     if (activeView !== 'stream' || !activeStreamEntry?.id || bhajanCache[activeStreamEntry.id]) {
+      setStreamLoadingDetail(false);
       return;
     }
     let cancelled = false;
     const controller = new AbortController();
+    setStreamLoadingDetail(true);
     void (async () => {
-      const cached = await getCachedBhajan(activeStreamEntry.id);
-      if (!cancelled && cached) {
-        setBhajanCache((prev) => ({ ...prev, [activeStreamEntry.id]: cached }));
-        return;
+      try {
+        const cached = await getCachedBhajan(activeStreamEntry.id);
+        if (!cancelled && cached) {
+          setBhajanCache((prev) => ({ ...prev, [activeStreamEntry.id]: cached }));
+          return;
+        }
+        await fetchAndCacheBhajanDetail(activeStreamEntry.id, controller.signal);
+      } finally {
+        if (!cancelled) {
+          setStreamLoadingDetail(false);
+        }
       }
-      await fetchAndCacheBhajanDetail(activeStreamEntry.id, controller.signal);
     })();
     return () => {
       cancelled = true;
@@ -1110,7 +1119,7 @@ export function JamStudioClient({
             availableRagas={availableRagas}
             currentEntry={activeStreamEntry}
             currentBhajan={activeStreamBhajan}
-            loadingDetail={Boolean(activeStreamEntry && !activeStreamBhajan)}
+            loadingDetail={streamLoadingDetail}
             queue={streamQueue}
             queueIndex={streamIdx}
             likedSet={likedSet}
