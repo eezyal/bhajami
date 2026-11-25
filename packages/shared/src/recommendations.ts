@@ -344,9 +344,9 @@ export function isYouTubeRecording(rec: RecordingSource): boolean {
 }
 
 /**
- * Selects the optimal recording according to the user's sticky `'audio'` (direct MP3 first) vs
- * `'video'` (YouTube first) preference while falling back cleanly for audio-only or YouTube-only
- * bhajans across the unified stream queue.
+ * Selects the optimal recording according to the user's sticky `'audio'` (direct MP3 first,
+ * preferring SSS Media Centre Prasanthi audio over Sai Rhythms reference audio) vs `'video'`
+ * (YouTube first) preference while falling back cleanly across the unified stream queue.
  */
 export function pickStreamRecording(
   bhajan: Bhajan | null | undefined,
@@ -361,7 +361,10 @@ export function pickStreamRecording(
     return { recording: null, hasAudioOption: false, hasVideoOption: false };
   }
 
-  const directAudio = recs.find(isDirectAudioRecording) ?? null;
+  const sssmcAudio =
+    recs.find((r) => isDirectAudioRecording(r) && r.collection === 'sssmediacentre_bhajan_a_day') ??
+    null;
+  const directAudio = sssmcAudio ?? recs.find(isDirectAudioRecording) ?? null;
   const embeddableYt =
     recs.find((r) => isYouTubeRecording(r) && r.embeddable !== false) ?? null;
   const anyYt = embeddableYt ?? recs.find(isYouTubeRecording) ?? null;

@@ -107,6 +107,18 @@ class SssMediaCentreSyncTests(unittest.TestCase):
         self.assertEqual(parsed["ladiesPitch"]["semitoneFromC"], 7)
         self.assertEqual(len(parsed["lyricLines"]), 3)
 
+        # Slug without 24-hex suffix gets a distinct deterministic hash objectId (never colliding with sidebar nav IDs)
+        nav_prefix = json.dumps({"nav": {"id": "d4e5f6a7b8c9d0e1f2a3b4c5"}})
+        item_plain_slug = dict(item, id="d4e5f6a7b8c9d0e1f2a3b4c5", slug="narayana-govinda-hare")
+        parsed_plain = sssmc.parse_sssmc_listen_html(
+            _make_sample_rsc_html({"prefix": nav_prefix, "item": item_plain_slug}),
+            "https://www.sssmediacentre.org/listen/narayana-govinda-hare",
+        )
+        self.assertIsNotNone(parsed_plain)
+        assert parsed_plain is not None
+        self.assertNotEqual(parsed_plain["objectId"], "d4e5f6a7b8c9d0e1f2a3b4c5")
+        self.assertNotEqual(parsed_plain["objectId"], parsed["objectId"])
+
     def test_foolproof_matching_across_prefixes_suffixes_phonetics_and_vetoes(self) -> None:
         catalog = [
             {
@@ -207,7 +219,7 @@ class SssMediaCentreSyncTests(unittest.TestCase):
         m3 = sssmc.match_sssmc_to_catalog(parsed_sheetala, catalog)
         self.assertEqual(m3["status"], "new_bhajan")
 
-        # 4. Similar refrain vetoed when full lyrics disagree completely -> becomes new bhajan
+        # 4. Similar refrain vetoed when verse bodies disagree -> routed to Admin Queue (needs_verification), never auto-merged
         parsed_govinda_different = {
             "objectId": "cccccccccccc333333333333",
             "slug": "govinda-gopala-hey-nandalala-cccccccccccc333333333333",
@@ -222,7 +234,76 @@ class SssMediaCentreSyncTests(unittest.TestCase):
             ],
         }
         m4 = sssmc.match_sssmc_to_catalog(parsed_govinda_different, catalog)
-        self.assertEqual(m4["status"], "new_bhajan")
+        self.assertEqual(m4["status"], "needs_verification")
+        self.assertEqual(m4["method"], "sssmc_lyrics_conflict_review")
+        self.assertTrue(str(m4["candidates"][0]["reason"]).startswith("lyrics_conflict"))
+
+        # 5. Strictly verified full-lyrics duplicate docs (e.g. Sai Rhythms + YouTube) BOTH get matched via additionalTargetIds
+        dup_catalog = [
+            {
+                "id": "gajanana-hey-gajanana",
+                "slug": "gajanana-hey-gajanana",
+                "title": "Gajanana Hey Gajanana",
+                "lyricsSets": [
+                    {
+                        "language": "Roman",
+                        "script": "roman",
+                        "lines": [
+                            "Gajanana Hey Gajanana",
+                            "Gouri Tanaya Gajanana",
+                            "Parvati Nandana Hey Shubhanana",
+                            "Mooshika Vahana Gajanana",
+                        ],
+                    }
+                ],
+                "recordings": [{"id": "sair_1", "collection": "sairhythms_ref", "externalUrl": "https://sairhythms.org/gaj.mp3"}],
+                "metadataSource": "sairhythms_verified",
+            },
+            {
+                "id": "yt_gajanana",
+                "slug": "yt-gajanana",
+                "title": "Gajanana Hey Gajanana",
+                "lyricsSets": [
+                    {
+                        "language": "Roman",
+                        "script": "roman",
+                        "lines": [
+                            "Gajanana Hey Gajanana",
+                            "Gouri Tanaya Gajanana",
+                            "Parvati Nandana Hey Shubhanana",
+                            "Mooshika Vahana Gajanana",
+                        ],
+                    }
+                ],
+                "recordings": [{"id": "yt_gaj", "youtubeVideoId": "gaj123"}],
+                "metadataSource": "youtube_sss_bhajans",
+            },
+        ]
+        parsed_gajanana = {
+            "objectId": "dddddddddddd444444444444",
+            "slug": "gajanana-hey-gajanana-dddddddddddd444444444444",
+            "cleanSlug": "gajanana-hey-gajanana",
+            "title": "Gajanana Hey Gajanana",
+            "audioUrl": "https://content.sssmediacentre.org/audio/gajanana.mp3",
+            "lyricLines": [
+                "Gajanana Hey Gajanana",
+                "Gouri Tanaya Gajanana Parvati Nandana Hey Shubhanana",
+                "Mooshika Vahana Gajanana",
+            ],
+        }
+        m5 = sssmc.match_sssmc_to_catalog(parsed_gajanana, dup_catalog)
+        self.assertEqual(m5["status"], "matched")
+        self.assertEqual(m5["targetId"], "gajanana-hey-gajanana")
+        self.assertEqual(m5.get("additionalTargetIds"), ["yt_gajanana"])
+
+        # 6. Title-only duplicate docs WITHOUT lyrics remain ambiguous -> Admin Queue (needs_verification)
+        title_only_dups = [
+            {**dup_catalog[0], "lyricsSets": []},
+            {**dup_catalog[1], "lyricsSets": []},
+        ]
+        m6 = sssmc.match_sssmc_to_catalog(parsed_gajanana, title_only_dups)
+        self.assertEqual(m6["status"], "needs_verification")
+        self.assertEqual(m6["method"], "sssmc_ambiguous_candidate")
 
     def test_merge_precedence_respects_overrides_and_enriches_youtube_stubs(self) -> None:
         parsed = {
@@ -260,7 +341,20 @@ class SssMediaCentreSyncTests(unittest.TestCase):
         override_patch = sssmc.build_sssmc_merge_patch(override_doc, parsed, match_info, file_size_bytes=2918403)
         self.assertNotIn("raga", override_patch)
         self.assertEqual(len(override_patch["recordings"]), 2)
-        self.assertEqual(override_patch["recordings"][1]["collection"], "sssmediacentre_bhajan_a_day")
+        self.assertEqual(override_patch["recordings"][0]["collection"], "sssmediacentre_bhajan_a_day")
+        self.assertEqual(override_patch["recordings"][1]["id"], "yt_1")
+
+        # Prepends SSSMC ahead of existing Sai Rhythms MP3 on shared Sai Rhythms doc
+        sr_doc = {
+            "id": "sr_1",
+            "title": "Manasa Bhajare Guru Charanam",
+            "metadataSource": "sairhythms_verified",
+            "raga": {"name": "Shivaranjani"},
+            "recordings": [{"id": "sair_old", "collection": "sairhythms_ref", "externalUrl": "https://sairhythms.org/m.mp3"}],
+        }
+        sr_patch = sssmc.build_sssmc_merge_patch(sr_doc, parsed, match_info, file_size_bytes=2918403)
+        self.assertEqual(sr_patch["recordings"][0]["collection"], "sssmediacentre_bhajan_a_day")
+        self.assertEqual(sr_patch["recordings"][1]["collection"], "sairhythms_ref")
 
         # B. YouTube stub missing raga/pitch/lyrics -> gets enriched cleanly + keeps YouTube recording
         yt_stub = {

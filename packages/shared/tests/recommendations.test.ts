@@ -185,6 +185,20 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
     } as unknown as Bhajan;
     assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').recording?.id, 'yt_abc');
     assert.equal(pickStreamRecording(ytOnlyBhajan, 'audio').hasAudioOption, false);
+
+    const multiMp3Bhajan = {
+      id: 'multi-mp3',
+      recordings: [
+        dualBhajan.recordings[1],
+        {
+          id: 'sssmc_001',
+          label: 'SSS Media Centre — A Bhajan A Day',
+          collection: 'sssmediacentre_bhajan_a_day',
+          externalUrl: 'https://content.sssmediacentre.org/audio/sample.mp3',
+        },
+      ],
+    } as unknown as Bhajan;
+    assert.equal(pickStreamRecording(multiMp3Bhajan, 'audio').recording?.id, 'sssmc_001');
   });
 
   it('includes both direct-audio and YouTube tracks in unified discovery queues across modes', () => {

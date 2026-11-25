@@ -222,11 +222,10 @@ def _extract_rsc_stream_text(html: str) -> str:
     return "\n".join(chunks)
 
 
-def _extract_json_string_field(text: str, key: str, around_pos: int) -> str | None:
-    """Decode a single JSON string property (supporting multi-line escapes) near `around_pos`."""
-    window_start = max(0, around_pos - 6000)
-    window_end = min(len(text), around_pos + 12000)
-    snippet = text[window_start:window_end]
+def _extract_json_string_field(text: str, key: str, from_pos: int) -> str | None:
+    """Decode a single JSON string property from the item payload slice starting at `from_pos`."""
+    window_end = min(len(text), from_pos + 16000)
+    snippet = text[from_pos:window_end]
     m = re.search(rf'"{re.escape(key)}"\s*:\s*("(?:\\.|[^"\\])*")', snippet)
     if not m:
         return None
@@ -254,27 +253,24 @@ def _find_sssmc_item_object(stream_text: str) -> dict[str, Any]:
                     break
                 try:
                     obj, _ = decoder.raw_decode(stream_text, brace_pos)
-                    if isinstance(obj, dict) and ("customMetaData" in obj or "audioUrl" in obj):
-                        if "audioUrl" in obj or "customMetaData" in obj:
-                            # Ensure rich item dict wins over tiny wrapper dicts
-                            if isinstance(obj.get("customMetaData"), dict):
-                                return obj
+                    if isinstance(obj, dict) and isinstance(obj.get("customMetaData"), dict):
+                        return obj
                 except json.JSONDecodeError:
                     pass
                 search_from = brace_pos
             idx = pos + len(anchor)
 
-    # Targeted fallback: decode `customMetaData` directly even if an ancestor object spans RSC chunks
+    # Targeted fallback: decode `customMetaData` + sibling fields strictly following it
     cm_pos = stream_text.find('"customMetaData"')
     if cm_pos != -1:
         colon_pos = stream_text.find("{", cm_pos)
         if colon_pos != -1:
             try:
-                custom_meta, _ = decoder.raw_decode(stream_text, colon_pos)
+                custom_meta, after_cm = decoder.raw_decode(stream_text, colon_pos)
                 if isinstance(custom_meta, dict):
                     synthesized: dict[str, Any] = {"customMetaData": custom_meta}
                     for k in ("audioUrl", "content", "title", "slug", "id", "lyrics"):
-                        val = _extract_json_string_field(stream_text, k, cm_pos)
+                        val = _extract_json_string_field(stream_text, k, after_cm)
                         if val is not None:
                             synthesized[k] = val
                     return synthesized
@@ -286,15 +282,16 @@ def _find_sssmc_item_object(stream_text: str) -> dict[str, Any]:
 def _extract_object_id_and_slug(page_url: str, item_obj: Mapping[str, Any]) -> tuple[str, str]:
     parsed_url = urllib.parse.urlsplit(page_url.strip())
     path_slug = parsed_url.path.rstrip("/").rsplit("/", 1)[-1]
-    slug = str(item_obj.get("slug") or path_slug or "").strip()
+    slug = str(path_slug or item_obj.get("slug") or "").strip()
+    m = re.search(r"-([a-f0-9]{24})$", slug, re.I)
+    if m:
+        return m.group(1).lower(), slug
+    if slug:
+        return hashlib.sha1(slug.encode("utf-8")).hexdigest()[:24], slug
     obj_id = str(item_obj.get("id") or "").strip()
-    if not obj_id or not re.fullmatch(r"[a-f0-9]{24}", obj_id, re.I):
-        m = re.search(r"-([a-f0-9]{24})$", slug, re.I)
-        if m:
-            obj_id = m.group(1).lower()
-    if not obj_id:
-        obj_id = hashlib.sha1((slug or page_url).encode("utf-8")).hexdigest()[:24]
-    return obj_id.lower(), slug
+    if re.fullmatch(r"[a-f0-9]{24}", obj_id, re.I):
+        return obj_id.lower(), slug
+    return hashlib.sha1(page_url.encode("utf-8")).hexdigest()[:24], slug
 
 
 def _split_lyric_lines(raw_lyrics: str | None) -> list[str]:
@@ -550,6 +547,35 @@ def compute_sssmc_lyrics_similarity(
     return max(line_sim, flat_sim)
 
 
+def compute_body_lyrics_similarity(
+    lines_a: Sequence[str],
+    lines_b: Sequence[str],
+    title_hint: str = "",
+) -> float | None:
+    """Compare distinctive non-title verse-body tokens so shared first lines cannot mask distinct songs.
+
+    Returns `None` when either lyric set has fewer than 3 distinctive non-title tokens.
+    """
+    title_toks = set(phonetics.canonicalize_phrase(title_hint).split()) if title_hint else set()
+
+    def _distinctive_tokens(lines: Sequence[str]) -> set[str]:
+        tokens: set[str] = set()
+        for ln in list(lines)[:24]:
+            canon_ln = phonetics.canonicalize_phrase(phonetics._REPETITION_RE.sub(" ", ln))  # noqa: SLF001
+            for tok in canon_ln.split():
+                if not tok or tok in title_toks:
+                    continue
+                if phonetics._get_idf_weight(tok) >= 0.6:  # noqa: SLF001
+                    tokens.add(tok)
+        return tokens
+
+    body_a = _distinctive_tokens(lines_a)
+    body_b = _distinctive_tokens(lines_b)
+    if len(body_a) < 3 or len(body_b) < 3:
+        return None
+    return len(body_a & body_b) / max(1, len(body_a | body_b))
+
+
 def match_sssmc_to_catalog(
     parsed: Mapping[str, Any],
     catalog_docs: Sequence[Mapping[str, Any]],
@@ -604,6 +630,7 @@ def match_sssmc_to_catalog(
     alias_target_id = entity_aliases.get(sssmc_canon) if (sssmc_canon and entity_aliases) else None
 
     evaluated: list[dict[str, Any]] = []
+    confused_candidates: list[dict[str, Any]] = []
     for doc in catalog_docs:
         doc_id = str(doc.get("id") or doc.get("slug") or "").strip()
         if not doc_id:
@@ -650,13 +677,6 @@ def match_sssmc_to_catalog(
         if not is_exact_canon and fast_title_4gram < 0.14 and fast_lyrics_4gram < 0.15:
             continue
 
-        lyrics_sim: float | None = None
-        if len(sssmc_lines) >= 2 and len(cand_lines) >= 2:
-            lyrics_sim = compute_sssmc_lyrics_similarity(sssmc_lines, cand_lines)
-            # Hard lyrics disagreement veto prevents merging two distinct bhajans with similar titles
-            if lyrics_sim < 0.35:
-                continue
-
         title_sim = phonetics.compute_title_similarity(sssmc_title, cand_title)
         first_line_sim = (
             phonetics.compute_title_similarity(sssmc_first_line, cand_title)
@@ -664,6 +684,25 @@ def match_sssmc_to_catalog(
             else 0.0
         )
         best_title_sim = max(title_sim, first_line_sim)
+
+        lyrics_sim: float | None = None
+        body_sim: float | None = None
+        if len(sssmc_lines) >= 2 and len(cand_lines) >= 2:
+            lyrics_sim = compute_sssmc_lyrics_similarity(sssmc_lines, cand_lines)
+            body_sim = compute_body_lyrics_similarity(sssmc_lines, cand_lines, sssmc_title)
+            # Stringent full-lyrics + verse-body veto prevents merging distinct bhajans sharing a 1st line
+            if lyrics_sim < 0.45 or (body_sim is not None and body_sim < 0.30):
+                if best_title_sim >= 0.85:
+                    body_note = f", body={body_sim:.2f}" if body_sim is not None else ""
+                    confused_candidates.append(
+                        {
+                            "targetBhajanId": doc_id,
+                            "targetTitle": raw_cand_title,
+                            "score": round(float(best_title_sim * 0.8), 4),
+                            "reason": f"lyrics_conflict (title={best_title_sim:.2f}, lyrics={lyrics_sim:.2f}{body_note})",
+                        }
+                    )
+                continue
 
         is_prefix, matched_core_count = _is_prefix_subset_match(sssmc_title, cand_title)
 
@@ -685,8 +724,8 @@ def match_sssmc_to_catalog(
             method = "sssmc_exact_canonical"
             rank_score = 1.0 if lyrics_sim is None else round(0.95 + 0.05 * lyrics_sim, 4)
         elif lyrics_sim is not None and (
-            (lyrics_sim >= 0.60 and (best_title_sim >= 0.65 or is_prefix))
-            or (lyrics_sim >= 0.50 and best_title_sim >= 0.80)
+            (lyrics_sim >= 0.58 and (body_sim is None or body_sim >= 0.35) and (best_title_sim >= 0.65 or is_prefix))
+            or (lyrics_sim >= 0.58 and (body_sim is None or body_sim >= 0.45) and best_title_sim >= 0.80)
         ):
             eligible_auto = True
             method = "sssmc_lyrics_confirmed"
@@ -712,6 +751,7 @@ def match_sssmc_to_catalog(
                 "score": round(float(rank_score), 4),
                 "titleSim": round(float(best_title_sim), 4),
                 "lyricsOverlap": round(float(lyrics_sim), 4) if lyrics_sim is not None else None,
+                "bodyLyricsSim": round(float(body_sim), 4) if body_sim is not None else None,
                 "durationMatch": dur_match,
                 "eligibleAuto": eligible_auto,
                 "isExactCanon": is_exact_canon,
@@ -720,8 +760,18 @@ def match_sssmc_to_catalog(
         )
 
     evaluated.sort(key=lambda item: (-float(item["score"]), item["targetBhajanId"]))
+    confused_candidates.sort(key=lambda item: (-float(item["score"]), item["targetBhajanId"]))
 
     if not evaluated:
+        if confused_candidates:
+            return {
+                "status": "needs_verification",
+                "targetId": confused_candidates[0]["targetBhajanId"],
+                "targetTitle": confused_candidates[0]["targetTitle"],
+                "score": confused_candidates[0]["score"],
+                "method": "sssmc_lyrics_conflict_review",
+                "candidates": confused_candidates[:3],
+            }
         return {
             "status": "new_bhajan",
             "targetId": None,
@@ -732,50 +782,76 @@ def match_sssmc_to_catalog(
         }
 
     top = evaluated[0]
-    second_score = float(evaluated[1]["score"]) if len(evaluated) > 1 else 0.0
-    margin = float(top["score"]) - second_score
 
-    top_candidates_clean = [
-        {
+    def _cand_summary(c: Mapping[str, Any]) -> dict[str, Any]:
+        return {
             "targetBhajanId": c["targetBhajanId"],
             "targetTitle": c["targetTitle"],
             "score": c["score"],
             "reason": c["reason"],
         }
+
+    top_candidates_clean = [
+        _cand_summary(c)
         for c in evaluated[:3]
         if float(c["score"]) >= 0.65
     ]
 
     if top["eligibleAuto"]:
-        # If another doc has almost the exact same score (e.g., duplicate docs in Firestore),
-        # prefer safe Admin Curation review instead of silently picking the wrong doc.
-        is_ambiguous = len(evaluated) > 1 and margin < 0.06
-        if is_ambiguous:
+        close = [c for c in evaluated[1:] if float(top["score"]) - float(c["score"]) < 0.06]
+        if not close:
             return {
-                "status": "needs_verification",
+                "status": "matched",
                 "targetId": top["targetBhajanId"],
                 "targetTitle": top["targetTitle"],
                 "score": top["score"],
-                "method": "sssmc_ambiguous_candidate",
+                "method": top["reason"],
                 "candidates": top_candidates_clean,
             }
-        return {
-            "status": "matched",
-            "targetId": top["targetBhajanId"],
-            "targetTitle": top["targetTitle"],
-            "score": top["score"],
-            "method": top["reason"],
-            "candidates": top_candidates_clean,
-        }
 
-    if float(top["score"]) >= 0.72:
+        def _is_strictly_lyrics_verified(c: Mapping[str, Any]) -> bool:
+            lo = c.get("lyricsOverlap")
+            bs = c.get("bodyLyricsSim")
+            return lo is not None and float(lo) >= 0.65 and (bs is None or float(bs) >= 0.40)
+
+        if _is_strictly_lyrics_verified(top):
+            verified_close = [c for c in close if _is_strictly_lyrics_verified(c)]
+            return {
+                "status": "matched",
+                "targetId": top["targetBhajanId"],
+                "targetTitle": top["targetTitle"],
+                "additionalTargetIds": [c["targetBhajanId"] for c in verified_close],
+                "score": top["score"],
+                "method": top["reason"],
+                "candidates": top_candidates_clean,
+            }
+
         return {
             "status": "needs_verification",
             "targetId": top["targetBhajanId"],
             "targetTitle": top["targetTitle"],
             "score": top["score"],
-            "method": "sssmc_review_band",
+            "method": "sssmc_ambiguous_candidate",
             "candidates": top_candidates_clean,
+        }
+
+    if float(top["score"]) >= 0.72 or confused_candidates:
+        merged_review = top_candidates_clean + [
+            c
+            for c in confused_candidates
+            if c["targetBhajanId"] not in {tc["targetBhajanId"] for tc in top_candidates_clean}
+        ]
+        return {
+            "status": "needs_verification",
+            "targetId": top["targetBhajanId"],
+            "targetTitle": top["targetTitle"],
+            "score": top["score"],
+            "method": (
+                "sssmc_lyrics_conflict_review"
+                if confused_candidates and float(top["score"]) < 0.72
+                else "sssmc_review_band"
+            ),
+            "candidates": merged_review[:3],
         }
 
     return {
@@ -825,8 +901,7 @@ def _upsert_recording(
         for r in existing_recs
         if isinstance(r, Mapping) and r.get("id") != rec_id and r.get("externalUrl") != ext_url
     ]
-    cleaned.append(dict(new_rec))
-    return cleaned
+    return [dict(new_rec), *cleaned]
 
 
 def _is_placeholder_raga(doc: Mapping[str, Any]) -> bool:
@@ -1164,6 +1239,7 @@ def run_sync(
         "results": [],
     }
 
+    started_at = utc_now_iso()
     batch = fs_client.batch() if (publish_firestore and not dry_run and fs_client is not None) else None
     batch_ops = 0
 
@@ -1213,17 +1289,23 @@ def run_sync(
             target_id = match_info.get("targetId")
 
             if status == "matched" and target_id and target_id in docs_by_id:
-                existing = docs_by_id[target_id]
-                patch = build_sssmc_merge_patch(existing, parsed, match_info, file_size_bytes=file_size)
-                existing.update(patch)
+                target_ids_to_patch = [target_id]
+                for extra_id in match_info.get("additionalTargetIds") or []:
+                    if extra_id and extra_id in docs_by_id and extra_id not in target_ids_to_patch:
+                        target_ids_to_patch.append(extra_id)
+
+                for tid in target_ids_to_patch:
+                    existing = docs_by_id[tid]
+                    patch = build_sssmc_merge_patch(existing, parsed, match_info, file_size_bytes=file_size)
+                    existing.update(patch)
+                    if batch is not None and stats["firestoreWrites"] + batch_ops < max_firestore_writes:
+                        batch.set(fs_client.collection("bhajans").document(tid), patch, merge=True)
+                        batch_ops += 1
+
                 if method == "sssmc_already_linked":
                     stats["alreadyLinked"] += 1
                 else:
                     stats["matched"] += 1
-
-                if batch is not None and stats["firestoreWrites"] + batch_ops < max_firestore_writes:
-                    batch.set(fs_client.collection("bhajans").document(target_id), patch, merge=True)
-                    batch_ops += 1
             else:
                 if status == "needs_verification":
                     stats["needsVerification"] += 1
@@ -1276,6 +1358,27 @@ def run_sync(
             stats["results"].append(summary)
 
         _flush_batch()
+        if publish_firestore and not dry_run and fs_client is not None:
+            finished_at = utc_now_iso()
+            run_id = f"sssmc_{started_at.replace(':', '').replace('-', '')}"
+            fs_client.collection("ingestionRuns").document(run_id).set(
+                {
+                    "runId": run_id,
+                    "source": "sssmediacentre_bhajan_a_day",
+                    "startedAt": started_at,
+                    "finishedAt": finished_at,
+                    "status": "partial" if stats["errors"] > 0 else "success",
+                    "itemsScanned": stats["scanned"],
+                    "matchedAuto": stats["matched"],
+                    "queuedDoubt": stats["needsVerification"],
+                    "createdNew": stats["newBhajan"],
+                    "skippedDuplicate": stats["alreadyLinked"],
+                    "parseErrors": stats["errors"],
+                    "youtubeQuotaUnitsUsed": 0,
+                    "firestoreWrites": stats["firestoreWrites"] + 1,
+                }
+            )
+            stats["firestoreWrites"] += 1
     finally:
         if conn is not None:
             conn.close()
