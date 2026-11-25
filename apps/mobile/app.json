@@ -14,7 +14,8 @@
       "package": "com.saibhajanverse.bhajami"
     },
     "plugins": [
-      "expo-av"
+      "expo-av",
+      "expo-asset"
     ],
     "extra": {
       "firebaseProjectId": "saibhajanverse"
