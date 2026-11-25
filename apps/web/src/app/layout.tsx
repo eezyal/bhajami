@@ -1,11 +1,27 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { FormValidationSync } from '@/components/FormValidationSync';
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#fdf8f0' },
+    { media: '(prefers-color-scheme: dark)', color: '#14100e' },
+  ],
+};
 
 export const metadata: Metadata = {
   title: 'bhaJami — Sathya Sai Bhajans Jam Studio',
   description:
-    'Dual-theme Sathya Sai Bhajans Studio with Sai Rhythms pitch/raga metadata, Tanpura Shruti box, local archive streaming, and moderated community lyrics corrections.',
+    'Dual-theme Sathya Sai Bhajans Studio with continuous Bhajan Stream radio, login-synced Liked playlist, Raga recommendations, and Tanpura Shruti box.',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    title: 'bhaJami',
+    statusBarStyle: 'default',
+  },
 };
 
 export default function RootLayout({

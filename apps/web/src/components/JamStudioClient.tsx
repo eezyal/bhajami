@@ -5,13 +5,21 @@ import Link from 'next/link';
 import { onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import {
+  buildStreamQueue,
+  canonicalizePhrase,
+  computeSimilarBhajans,
   getMissingBhajanFields,
+  groupRecommendationsByRaga,
+  normalizeRagaKey,
+  resolveLikedSet,
   transposePitch,
   type Bhajan,
+  type BhajanIndexEntry,
   type CatalogIndexPayload,
   type CatalogStats,
   type LyricCorrection,
   type MissingFieldKey,
+  type StreamModeKind,
   type SubmissionType,
 } from '@bhajami/shared';
 import {
@@ -25,10 +33,19 @@ import {
   setCachedBhajan,
   setCachedCatalogIndex,
 } from '@/lib/index-cache';
+import {
+  loadLocalLikedIds,
+  saveLocalLikedIds,
+  syncLoadUserFavorites,
+  syncSaveUserFavorites,
+} from '@/lib/user-library';
 import { ThemeToggle } from './ThemeToggle';
 import { AuthDialog, type SessionUser } from './AuthDialog';
 import { SuggestCorrectionDialog } from './SuggestCorrectionDialog';
 import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
+import { StreamRadioView } from './StreamRadioView';
+
+type AppViewMode = 'home' | 'stream' | 'studio' | 'liked';
 
 interface JamStudioClientProps {
   initialIndex: CatalogIndexPayload;
@@ -106,6 +123,26 @@ export function JamStudioClient({
   const [projectorOpen, setProjectorOpen] = useState(false);
   const [user, setUser] = useState<SessionUser | null>(null);
 
+  // All-form-factor App-Mode views, Stream Radio & Login-Synced Liked Playlist
+  const [activeView, setActiveView] = useState<AppViewMode>('home');
+  const [likedIds, setLikedIds] = useState<string[]>([]);
+  const [likedSyncStatus, setLikedSyncStatus] = useState<'device' | 'syncing' | 'synced'>('device');
+  const [streamMode, setStreamMode] = useState<StreamModeKind>('discovery');
+  const [streamDeity, setStreamDeity] = useState<string>('All');
+  const [streamRaga, setStreamRaga] = useState<string>('');
+  const [streamSeed, setStreamSeed] = useState<number>(1);
+  const [streamQueue, setStreamQueue] = useState<BhajanIndexEntry[]>(() =>
+    buildStreamQueue(initialIndex.entries, {
+      mode: 'discovery',
+      likedIds: [],
+      seed: 1,
+    }),
+  );
+  const [streamIdx, setStreamIdx] = useState(0);
+  const [streamAutoPlay, setStreamAutoPlay] = useState(true);
+  const [likedRagaFilter, setLikedRagaFilter] = useState<string>('');
+  const [homeQuery, setHomeQuery] = useState('');
+
   // Persist Firebase client authentication across reloads
   useEffect(() => {
     const fb = getFirebaseClientAuth();
@@ -126,6 +163,55 @@ export function JamStudioClient({
     });
     return () => unsub();
   }, [cloudMode]);
+
+  // Hydrate liked playlist from localStorage and sync with Firestore `users/{uid}` when signed in
+  useEffect(() => {
+    let cancelled = false;
+    const isSignedInAccount = Boolean(user?.uid && user.provider !== 'guest');
+    if (!isSignedInAccount || !user?.uid) {
+      setLikedIds(loadLocalLikedIds(null));
+      setLikedSyncStatus('device');
+      return;
+    }
+
+    const signedUid = user.uid;
+    const signedEmail = user.email;
+    const signedName = user.name;
+    setLikedSyncStatus('syncing');
+    void syncLoadUserFavorites(signedUid).then(async (merged) => {
+      if (cancelled) return;
+      setLikedIds(merged);
+      const guestIds = loadLocalLikedIds(null);
+      if (guestIds.length > 0) {
+        await syncSaveUserFavorites({
+          uid: signedUid,
+          favorites: merged,
+          email: signedEmail,
+          displayName: signedName,
+        });
+        saveLocalLikedIds([], null);
+      }
+      if (!cancelled) {
+        setLikedSyncStatus('synced');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.email, user?.name, user?.provider, user?.uid]);
+
+  // Esc key closes Samithi Projector View
+  useEffect(() => {
+    if (!projectorOpen) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        setProjectorOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [projectorOpen]);
 
   // Open ?respondTo=<correctionId> flow with verified Bearer token
   useEffect(() => {
@@ -245,8 +331,141 @@ export function JamStudioClient({
     };
   }, [initialBhajan, initialIndex, refreshCatalog]);
 
+  const likedSet = useMemo(
+    () => resolveLikedSet(likedIds, catalogIndex.entries),
+    [catalogIndex.entries, likedIds],
+  );
+
+  const likedEntries = useMemo(
+    () => catalogIndex.entries.filter((entry) => likedSet.has(entry.id)),
+    [catalogIndex.entries, likedSet],
+  );
+
+  const similarRecs = useMemo(
+    () => computeSimilarBhajans(likedIds, catalogIndex.entries, { limit: 18 }),
+    [catalogIndex.entries, likedIds],
+  );
+
+  const ragaShelves = useMemo(
+    () => groupRecommendationsByRaga(similarRecs, 4),
+    [similarRecs],
+  );
+
+  const availableRagas = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const entry of catalogIndex.entries) {
+      const key = normalizeRagaKey(entry.ragaName);
+      if (key && !byKey.has(key) && entry.ragaName) {
+        byKey.set(key, entry.ragaName);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
+  }, [catalogIndex.entries]);
+
+  const likedRagaChips = useMemo(() => {
+    const byKey = new Map<string, string>();
+    for (const entry of likedEntries) {
+      const key = normalizeRagaKey(entry.ragaName);
+      if (key && !byKey.has(key) && entry.ragaName) {
+        byKey.set(key, entry.ragaName);
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
+  }, [likedEntries]);
+
+  const filteredLikedEntries = useMemo(() => {
+    if (!likedRagaFilter) return likedEntries;
+    const wanted = normalizeRagaKey(likedRagaFilter);
+    return likedEntries.filter((entry) => normalizeRagaKey(entry.ragaName) === wanted);
+  }, [likedEntries, likedRagaFilter]);
+
+  const likedIdsRef = useRef(likedIds);
+  likedIdsRef.current = likedIds;
+
+  // Rebuild stream queue cleanly on mode/filter/reshuffle without disrupting current song on like
+  useEffect(() => {
+    const nextQueue = buildStreamQueue(catalogIndex.entries, {
+      mode: streamMode,
+      likedIds: likedIdsRef.current,
+      deityFilter: streamDeity,
+      ragaFilter: streamRaga,
+      seed: streamSeed,
+    });
+    setStreamQueue(nextQueue);
+    setStreamIdx(0);
+  }, [catalogIndex.entries, streamDeity, streamMode, streamRaga, streamSeed]);
+
+  const activeStreamEntry = streamQueue[streamIdx] || streamQueue[0] || null;
+  const activeStreamBhajan = activeStreamEntry ? bhajanCache[activeStreamEntry.id] || null : null;
+
+  useEffect(() => {
+    if (activeView !== 'stream' || !activeStreamEntry?.id || bhajanCache[activeStreamEntry.id]) {
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    void (async () => {
+      const cached = await getCachedBhajan(activeStreamEntry.id);
+      if (!cancelled && cached) {
+        setBhajanCache((prev) => ({ ...prev, [activeStreamEntry.id]: cached }));
+        return;
+      }
+      await fetchAndCacheBhajanDetail(activeStreamEntry.id, controller.signal);
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [activeStreamEntry?.id, activeView, bhajanCache, fetchAndCacheBhajanDetail]);
+
+  const handleToggleLike = useCallback(
+    (bhajanId: string) => {
+      setLikedIds((prev) => {
+        const exists = prev.includes(bhajanId);
+        const next = exists ? prev.filter((id) => id !== bhajanId) : [bhajanId, ...prev];
+        const isSignedInAccount = Boolean(user?.uid && user.provider !== 'guest');
+        saveLocalLikedIds(next, isSignedInAccount ? user?.uid : null);
+        if (isSignedInAccount && user?.uid) {
+          setLikedSyncStatus('syncing');
+          void syncSaveUserFavorites({
+            uid: user.uid,
+            favorites: next,
+            email: user.email,
+            displayName: user.name,
+          }).then((ok) => {
+            setLikedSyncStatus(ok ? 'synced' : 'device');
+          });
+        }
+        return next;
+      });
+    },
+    [user?.email, user?.name, user?.provider, user?.uid],
+  );
+
+  const playEntryInStream = useCallback(
+    (entry: BhajanIndexEntry) => {
+      setStreamQueue((prev) => {
+        const existingIdx = prev.findIndex((item) => item.id === entry.id);
+        if (existingIdx >= 0) {
+          setStreamIdx(existingIdx);
+          return prev;
+        }
+        setStreamIdx(0);
+        return [entry, ...prev];
+      });
+      setActiveView('stream');
+    },
+    [],
+  );
+
+  const openEntryInStudio = useCallback((bhajanId: string) => {
+    setSelectedId(bhajanId);
+    setActiveView('studio');
+  }, []);
+
   const filteredEntries = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const canonTokens = q ? canonicalizePhrase(q).split(' ').filter(Boolean) : [];
     return catalogIndex.entries.filter((b) => {
       if (onlyVerified && b.metadataSource !== 'sairhythms_verified') return false;
       if (
@@ -256,14 +475,42 @@ export function JamStudioClient({
         return false;
       }
       if (!q) return true;
-      return (
+      if (
         b.title.toLowerCase().includes(q) ||
         (b.ragaName || '').toLowerCase().includes(q) ||
         (b.deity || '').toLowerCase().includes(q) ||
         b.searchText.toLowerCase().includes(q)
+      ) {
+        return true;
+      }
+      return (
+        canonTokens.length > 0 &&
+        canonTokens.every((ct) => b.phoneticTokens.some((pt) => pt.includes(ct)))
       );
     });
   }, [catalogIndex.entries, deityFilter, onlyVerified, query]);
+
+  const homeSearchResults = useMemo(() => {
+    const q = homeQuery.trim().toLowerCase();
+    if (!q) return [];
+    const canonTokens = canonicalizePhrase(q).split(' ').filter(Boolean);
+    return catalogIndex.entries
+      .filter((b) => {
+        if (
+          b.title.toLowerCase().includes(q) ||
+          (b.ragaName || '').toLowerCase().includes(q) ||
+          (b.deity || '').toLowerCase().includes(q) ||
+          b.searchText.toLowerCase().includes(q)
+        ) {
+          return true;
+        }
+        return (
+          canonTokens.length > 0 &&
+          canonTokens.every((ct) => b.phoneticTokens.some((pt) => pt.includes(ct)))
+        );
+      })
+      .slice(0, 9);
+  }, [catalogIndex.entries, homeQuery]);
 
   const activeEntry = useMemo(
     () =>
@@ -473,7 +720,11 @@ export function JamStudioClient({
     <>
       <header className="top-header">
         <div className="top-header-inner">
-          <Link href="/" className="brand-lockup">
+          <Link
+            href="/"
+            className="brand-lockup"
+            onClick={() => setActiveView('home')}
+          >
             <span className="brand-mark" aria-hidden="true">
               भ
             </span>
@@ -482,6 +733,41 @@ export function JamStudioClient({
               <span className="brand-sub">Sathya Sai Bhajan Jam Studio · Option 3 Vault</span>
             </span>
           </Link>
+
+          <nav className="app-nav-desktop" aria-label="Primary App Views">
+            <button
+              type="button"
+              className="app-nav-tab"
+              aria-current={activeView === 'home' ? 'page' : undefined}
+              onClick={() => setActiveView('home')}
+            >
+              Home
+            </button>
+            <button
+              type="button"
+              className="app-nav-tab"
+              aria-current={activeView === 'stream' ? 'page' : undefined}
+              onClick={() => setActiveView('stream')}
+            >
+              Stream Radio
+            </button>
+            <button
+              type="button"
+              className="app-nav-tab"
+              aria-current={activeView === 'studio' ? 'page' : undefined}
+              onClick={() => setActiveView('studio')}
+            >
+              Jam Studio
+            </button>
+            <button
+              type="button"
+              className="app-nav-tab"
+              aria-current={activeView === 'liked' ? 'page' : undefined}
+              onClick={() => setActiveView('liked')}
+            >
+              ♥ Liked ({likedEntries.length})
+            </button>
+          </nav>
 
           <div className="header-actions">
             <Link href="/admin/corrections" className="btn">
@@ -502,7 +788,7 @@ export function JamStudioClient({
         </div>
       </header>
 
-      <main className="portal-shell">
+      <main className="portal-shell app-stage">
         <div className="stats-strip">
           <span className="badge">Total Bhajans: {catalogIndex.stats.totalBhajans}</span>
           <span className="badge badge-verified">
@@ -519,7 +805,487 @@ export function JamStudioClient({
           )}
         </div>
 
-        <div className="portal-grid">
+        {activeView === 'home' && (
+          <div>
+            <section className="home-hero-card" aria-label="Bhajan Radio and Studio Home">
+              <div>
+                <h1 style={{ margin: '0 0 0.35rem', fontSize: 'clamp(1.45rem, 3vw, 2rem)' }}>
+                  Your Sathya Sai Bhajans Companion
+                </h1>
+                <p style={{ margin: 0, color: 'var(--muted)', maxWidth: '62ch' }}>
+                  Listen continuously with Random Bhajan Stream, tap ♥ to curate your{' '}
+                  {user && user.provider !== 'guest' ? 'cloud-synced' : 'personal'} Liked playlist,
+                  or explore bhajans sharing the same Raga.
+                </p>
+              </div>
+              <div className="home-hero-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setStreamMode('discovery');
+                    setStreamSeed((s) => s + 1);
+                    setActiveView('stream');
+                  }}
+                >
+                  ▶ Start Random Stream
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  onClick={() => {
+                    setStreamMode('for_you');
+                    setStreamSeed((s) => s + 1);
+                    setActiveView('stream');
+                  }}
+                >
+                  ✨ For You (Similar Raga)
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setActiveView('studio')}
+                >
+                  Open Jam Studio
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setActiveView('liked')}
+                >
+                  ♥ Liked Playlist ({likedEntries.length})
+                </button>
+              </div>
+
+              <div className="form-field" style={{ marginBottom: 0 }}>
+                <label htmlFor="home-quick-search">Quick Search Across All Scripts &amp; Ragas</label>
+                <input
+                  id="home-quick-search"
+                  type="search"
+                  className="input-control"
+                  placeholder="Try Vittala, Narayana, Bowli, Ganesha, Sai..."
+                  value={homeQuery}
+                  onChange={(e) => setHomeQuery(e.target.value)}
+                />
+              </div>
+
+              {homeSearchResults.length > 0 && (
+                <div className="rec-shelf-grid">
+                  {homeSearchResults.map((entry) => {
+                    const liked = likedSet.has(entry.id);
+                    return (
+                      <article key={entry.id} className="rec-card">
+                        <div>
+                          <h3 className="rec-card-title">{entry.title}</h3>
+                          <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
+                            {[entry.deity, entry.ragaName, `${entry.recordingCount} audio`]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        </div>
+                        <div className="rec-card-actions">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={() => playEntryInStream(entry)}
+                          >
+                            Stream
+                          </button>
+                          <button
+                            type="button"
+                            className="like-btn"
+                            aria-pressed={liked}
+                            aria-label={liked ? `Unlike ${entry.title}` : `Like ${entry.title}`}
+                            onClick={() => handleToggleLike(entry.id)}
+                          >
+                            {liked ? '♥' : '♡'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => openEntryInStudio(entry.id)}
+                          >
+                            Studio
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+
+            {ragaShelves.map((shelf) => (
+              <section
+                key={shelf.ragaName}
+                className="rec-shelf-section"
+                aria-label={`Because You Liked Raga ${shelf.ragaName}`}
+              >
+                <div className="rec-shelf-header">
+                  <h2>Because You Liked Raga {shelf.ragaName}</h2>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => {
+                      setStreamRaga(shelf.ragaName);
+                      setStreamDeity('All');
+                      setStreamMode('discovery');
+                      setStreamSeed((s) => s + 1);
+                      setActiveView('stream');
+                    }}
+                  >
+                    Stream Raga {shelf.ragaName}
+                  </button>
+                </div>
+                <div className="rec-shelf-grid">
+                  {shelf.items.slice(0, 6).map((rec) => {
+                    const liked = likedSet.has(rec.entry.id);
+                    return (
+                      <article key={rec.entry.id} className="rec-card">
+                        <div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.3rem' }}>
+                            {rec.reasons.slice(0, 2).map((reason) => (
+                              <span key={reason} className="badge badge-verified">
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+                          <h3 className="rec-card-title">{rec.entry.title}</h3>
+                          <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
+                            {[rec.entry.deity, rec.entry.beat].filter(Boolean).join(' · ')}
+                          </p>
+                        </div>
+                        <div className="rec-card-actions">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={() => playEntryInStream(rec.entry)}
+                          >
+                            Stream
+                          </button>
+                          <button
+                            type="button"
+                            className="like-btn"
+                            aria-pressed={liked}
+                            aria-label={liked ? `Unlike ${rec.entry.title}` : `Like ${rec.entry.title}`}
+                            onClick={() => handleToggleLike(rec.entry.id)}
+                          >
+                            {liked ? '♥ Liked' : '♡ Like'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => openEntryInStudio(rec.entry.id)}
+                          >
+                            Studio
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+
+            <section className="rec-shelf-section" aria-label="Recommended For You">
+              <div className="rec-shelf-header">
+                <h2>
+                  {likedEntries.length > 0
+                    ? 'Recommended Based on Your Likes'
+                    : 'Featured Verified Bhajans to Explore'}
+                </h2>
+                <span className="field-hint">
+                  {likedEntries.length > 0
+                    ? 'Ranked by Raga, Deity, and Beat similarity'
+                    : 'Tap ♡ Like on any bhajan to personalize recommendations'}
+                </span>
+              </div>
+              <div className="rec-shelf-grid">
+                {similarRecs.slice(0, 9).map((rec) => {
+                  const liked = likedSet.has(rec.entry.id);
+                  return (
+                    <article key={rec.entry.id} className="rec-card">
+                      <div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.3rem' }}>
+                          {rec.reasons.slice(0, 2).map((reason) => (
+                            <span key={reason} className="badge badge-verified">
+                              {reason}
+                            </span>
+                          ))}
+                        </div>
+                        <h3 className="rec-card-title">{rec.entry.title}</h3>
+                        <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
+                          {[rec.entry.ragaName, rec.entry.beat, `${rec.entry.recordingCount} audio`]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      </div>
+                      <div className="rec-card-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => playEntryInStream(rec.entry)}
+                        >
+                          Stream
+                        </button>
+                        <button
+                          type="button"
+                          className="like-btn"
+                          aria-pressed={liked}
+                          aria-label={liked ? `Unlike ${rec.entry.title}` : `Like ${rec.entry.title}`}
+                          onClick={() => handleToggleLike(rec.entry.id)}
+                        >
+                          {liked ? '♥ Liked' : '♡ Like'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => openEntryInStudio(rec.entry.id)}
+                        >
+                          Studio
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section className="rec-shelf-section" aria-label="Quick Deity Stream Shortcuts">
+              <div className="rec-shelf-header">
+                <h2>Deity Radio Channels</h2>
+              </div>
+              <div className="chip-row">
+                {DEITY_FILTERS.filter((d) => d !== 'All').map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    className="chip"
+                    onClick={() => {
+                      setStreamDeity(d);
+                      setStreamRaga('');
+                      setStreamMode('discovery');
+                      setStreamSeed((s) => s + 1);
+                      setActiveView('stream');
+                    }}
+                  >
+                    ▶ {d} Radio
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {activeView === 'stream' && (
+          <StreamRadioView
+            mode={streamMode}
+            onModeChange={(next) => setStreamMode(next)}
+            deityFilter={streamDeity}
+            onDeityFilterChange={(next) => setStreamDeity(next)}
+            ragaFilter={streamRaga}
+            onRagaFilterChange={(next) => setStreamRaga(next)}
+            deityChoices={DEITY_FILTERS}
+            availableRagas={availableRagas}
+            currentEntry={activeStreamEntry}
+            currentBhajan={activeStreamBhajan}
+            loadingDetail={Boolean(activeStreamEntry && !activeStreamBhajan)}
+            queue={streamQueue}
+            queueIndex={streamIdx}
+            likedSet={likedSet}
+            autoPlay={streamAutoPlay}
+            onToggleAutoPlay={() => setStreamAutoPlay((v) => !v)}
+            onToggleLike={handleToggleLike}
+            onPrev={() =>
+              setStreamIdx((idx) => (streamQueue.length > 0 ? (idx - 1 + streamQueue.length) % streamQueue.length : 0))
+            }
+            onNext={() =>
+              setStreamIdx((idx) => (streamQueue.length > 0 ? (idx + 1) % streamQueue.length : 0))
+            }
+            onReshuffle={() => setStreamSeed((s) => s + 1)}
+            onSelectQueueIndex={(idx) => setStreamIdx(idx)}
+            onOpenInStudio={openEntryInStudio}
+            onPlayEntry={playEntryInStream}
+            similarRecs={similarRecs}
+          />
+        )}
+
+        {activeView === 'liked' && (
+          <div>
+            <section className="home-hero-card" aria-label="Liked Bhajans Playlist">
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '0.75rem',
+                }}
+              >
+                <div>
+                  <h1 style={{ margin: '0 0 0.25rem', fontSize: '1.45rem' }}>
+                    Your Liked Bhajans Playlist ({likedEntries.length})
+                  </h1>
+                  <p className="field-hint" style={{ margin: 0 }}>
+                    {user && user.provider !== 'guest'
+                      ? likedSyncStatus === 'synced'
+                        ? `Synced to your account (${user.email || user.name})`
+                        : likedSyncStatus === 'syncing'
+                          ? 'Syncing favorites with your account…'
+                          : 'Saved locally on this device'
+                      : 'Saved on this device — Sign In with Google or Email to sync across devices.'}
+                  </p>
+                </div>
+                <div className="home-hero-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={likedEntries.length === 0}
+                    onClick={() => {
+                      setStreamMode('liked_only');
+                      setStreamDeity('All');
+                      setStreamRaga(likedRagaFilter);
+                      setStreamSeed((s) => s + 1);
+                      setActiveView('stream');
+                    }}
+                  >
+                    ▶ Play Liked Radio
+                  </button>
+                  {(!user || user.provider === 'guest') && (
+                    <button type="button" className="btn" onClick={() => setAuthOpen(true)}>
+                      Sign In to Sync
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {likedRagaChips.length > 0 && (
+                <div className="chip-row" role="group" aria-label="Filter Liked by Raga">
+                  <button
+                    type="button"
+                    className="chip"
+                    aria-pressed={likedRagaFilter === ''}
+                    onClick={() => setLikedRagaFilter('')}
+                  >
+                    All Ragas
+                  </button>
+                  {likedRagaChips.map((ragaName) => (
+                    <button
+                      key={ragaName}
+                      type="button"
+                      className="chip"
+                      aria-pressed={likedRagaFilter === ragaName}
+                      onClick={() => setLikedRagaFilter(ragaName)}
+                    >
+                      Raga {ragaName}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {filteredLikedEntries.length === 0 ? (
+                <p style={{ margin: 0, color: 'var(--muted)' }}>
+                  No liked bhajans yet. Start Random Stream or browse Home and tap ♡ Like to add favorites!
+                </p>
+              ) : (
+                <div className="rec-shelf-grid">
+                  {filteredLikedEntries.map((entry) => (
+                    <article key={entry.id} className="rec-card">
+                      <div>
+                        <h3 className="rec-card-title">{entry.title}</h3>
+                        <p className="field-hint" style={{ margin: '0.2rem 0 0' }}>
+                          {[entry.deity, entry.ragaName, entry.beat].filter(Boolean).join(' · ') ||
+                            'Bhajan'}
+                        </p>
+                      </div>
+                      <div className="rec-card-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => playEntryInStream(entry)}
+                        >
+                          Stream
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => openEntryInStudio(entry.id)}
+                        >
+                          Studio
+                        </button>
+                        <button
+                          type="button"
+                          className="like-btn"
+                          aria-pressed={true}
+                          aria-label={`Remove ${entry.title} from Liked Playlist`}
+                          onClick={() => handleToggleLike(entry.id)}
+                        >
+                          ♥ Remove
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {similarRecs.length > 0 && (
+              <section className="rec-shelf-section" aria-label="Similar Raga Suggestions">
+                <div className="rec-shelf-header">
+                  <h2>More Bhajans in Your Liked Ragas</h2>
+                  <span className="field-hint">Recommended automatically from your favorites</span>
+                </div>
+                <div className="rec-shelf-grid">
+                  {similarRecs.slice(0, 9).map((rec) => {
+                    const liked = likedSet.has(rec.entry.id);
+                    return (
+                      <article key={rec.entry.id} className="rec-card">
+                        <div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', marginBottom: '0.3rem' }}>
+                            {rec.reasons.slice(0, 2).map((reason) => (
+                              <span key={reason} className="badge badge-verified">
+                                {reason}
+                              </span>
+                            ))}
+                          </div>
+                          <h3 className="rec-card-title">{rec.entry.title}</h3>
+                        </div>
+                        <div className="rec-card-actions">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={() => playEntryInStream(rec.entry)}
+                          >
+                            Stream
+                          </button>
+                          <button
+                            type="button"
+                            className="like-btn"
+                            aria-pressed={liked}
+                            aria-label={liked ? `Unlike ${rec.entry.title}` : `Like ${rec.entry.title}`}
+                            onClick={() => handleToggleLike(rec.entry.id)}
+                          >
+                            {liked ? '♥ Like' : '♡ Like'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => openEntryInStudio(rec.entry.id)}
+                          >
+                            Studio
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {activeView === 'studio' && (
+          <div className="portal-grid">
           {/* Left: Discovery Sidebar */}
           <aside className="card catalog-sidebar" aria-label="Bhajan Catalog Search">
             <div className="form-field" style={{ marginBottom: 0 }}>
@@ -659,6 +1425,19 @@ export function JamStudioClient({
                   </div>
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <button
+                      type="button"
+                      className="like-btn"
+                      aria-pressed={likedSet.has(activeBhajan.id)}
+                      aria-label={
+                        likedSet.has(activeBhajan.id)
+                          ? `Unlike ${activeBhajan.title}`
+                          : `Like ${activeBhajan.title}`
+                      }
+                      onClick={() => handleToggleLike(activeBhajan.id)}
+                    >
+                      {likedSet.has(activeBhajan.id) ? '♥ Liked' : '♡ Like'}
+                    </button>
                     {missingFields.length > 0 && (
                       <button
                         type="button"
@@ -1097,8 +1876,48 @@ export function JamStudioClient({
               </p>
             </section>
           ) : null}
-        </div>
+          </div>
+        )}
       </main>
+
+      <nav className="app-bottom-nav" aria-label="Mobile App Views">
+        <button
+          type="button"
+          className="app-bottom-nav-btn"
+          aria-current={activeView === 'home' ? 'page' : undefined}
+          onClick={() => setActiveView('home')}
+        >
+          <span aria-hidden="true">🏠</span>
+          <span>Home</span>
+        </button>
+        <button
+          type="button"
+          className="app-bottom-nav-btn"
+          aria-current={activeView === 'stream' ? 'page' : undefined}
+          onClick={() => setActiveView('stream')}
+        >
+          <span aria-hidden="true">▶</span>
+          <span>Stream</span>
+        </button>
+        <button
+          type="button"
+          className="app-bottom-nav-btn"
+          aria-current={activeView === 'studio' ? 'page' : undefined}
+          onClick={() => setActiveView('studio')}
+        >
+          <span aria-hidden="true">🎹</span>
+          <span>Studio</span>
+        </button>
+        <button
+          type="button"
+          className="app-bottom-nav-btn"
+          aria-current={activeView === 'liked' ? 'page' : undefined}
+          onClick={() => setActiveView('liked')}
+        >
+          <span aria-hidden="true">♥</span>
+          <span>Liked ({likedEntries.length})</span>
+        </button>
+      </nav>
 
       {projectorOpen && activeBhajan ? (
         <div className="projector-overlay" role="dialog" aria-label="Samithi Projector View">

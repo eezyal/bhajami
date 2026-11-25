@@ -9,6 +9,8 @@ export interface YouTubeSegmentPlayerProps {
   endSec?: number;
   embeddable?: boolean;
   playbackRate?: number;
+  autoPlay?: boolean;
+  onEnded?: () => void;
 }
 
 interface YTPlayerInstance {
@@ -32,6 +34,7 @@ interface YTNamespace {
       playerVars?: Record<string, string | number>;
       events?: {
         onReady?: (event: YTPlayerEvent) => void;
+        onStateChange?: (event: YTPlayerEvent) => void;
         onError?: (event: YTPlayerEvent) => void;
       };
     },
@@ -121,12 +124,18 @@ export function YouTubeSegmentPlayer({
   endSec,
   embeddable = true,
   playbackRate = 1.0,
+  autoPlay = false,
+  onEnded,
 }: YouTubeSegmentPlayerProps) {
   const hostId = useId();
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayerInstance | null>(null);
   const playbackRateRef = useRef(playbackRate);
   playbackRateRef.current = playbackRate;
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
+  const autoPlayRef = useRef(autoPlay);
+  autoPlayRef.current = autoPlay;
 
   const [embedBlocked, setEmbedBlocked] = useState(embeddable === false);
   const [appliedRate, setAppliedRate] = useState(1.0);
@@ -164,6 +173,7 @@ export function YouTubeSegmentPlayer({
         rel: 0,
         modestbranding: 1,
         playsinline: 1,
+        autoplay: autoPlayRef.current ? 1 : 0,
       };
       if (typeof startSec === 'number' && startSec > 0) {
         playerVars.start = Math.floor(startSec);
@@ -188,6 +198,11 @@ export function YouTubeSegmentPlayer({
               // ignore unsupported rate error on live streams
             }
             setAppliedRate(snapped);
+          },
+          onStateChange: (ev) => {
+            if (!cancelled && ev.data === 0) {
+              onEndedRef.current?.();
+            }
           },
           onError: (ev) => {
             if (ev.data === 101 || ev.data === 150) {

@@ -1,0 +1,10 @@
+{
+  "name": "bhaJami — Sathya Sai Bhajans Studio",
+  "short_name": "bhaJami",
+  "description": "Sathya Sai Bhajans streaming radio, pitch/raga jam studio, and Samithi projector.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdf8f0",
+  "theme_color": "#c84b0f",
+  "icons": []
+}
