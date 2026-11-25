@@ -30,6 +30,16 @@ on:
         required: false
         default: '200'
         type: string
+      run_sssmediacentre:
+        description: 'Run SSS Media Centre (Bhajan A Day) MP3 enrichment when URLs seed file exists'
+        required: false
+        default: false
+        type: boolean
+      max_sssmediacentre_items:
+        description: 'Max SSS Media Centre /listen pages to process per run (default 200)'
+        required: false
+        default: '200'
+        type: string
 
 concurrency:
   group: daily-catalog-sync
@@ -84,6 +94,8 @@ jobs:
           NORMALIZE_LEGACY_YT: ${{ inputs.normalize_legacy_youtube || 'false' }}
           RUN_YOUTUBE: ${{ inputs.run_youtube || 'false' }}
           MAX_YT_VIDEOS: ${{ inputs.max_youtube_videos || '200' }}
+          RUN_SSSMC: ${{ inputs.run_sssmediacentre || 'false' }}
+          MAX_SSSMC_ITEMS: ${{ inputs.max_sssmediacentre_items || '200' }}
         run: |
           if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
             echo "FIREBASE_SERVICE_ACCOUNT_JSON secret not configured; skipping cloud sync steps."
@@ -131,6 +143,16 @@ jobs:
           if [ "$NORMALIZE_LEGACY_YT" = "true" ]; then
             echo "Running retroactive legacy YouTube document normalization..."
             python3 tools/catalog-pipeline/normalize_legacy_youtube_docs.py \
+              --publish-firestore \
+              --max-firestore-writes 4000
+          fi
+
+          if [ "$RUN_SSSMC" = "true" ] && [ -f "tools/catalog-pipeline/sssmc_bhajan_a_day_urls.txt" ]; then
+            echo "Running SSS Media Centre (Bhajan A Day) MP3 enrichment (max ${MAX_SSSMC_ITEMS})..."
+            python3 tools/catalog-pipeline/sync_sssmediacentre.py \
+              --urls-file tools/catalog-pipeline/sssmc_bhajan_a_day_urls.txt \
+              --catalog-source firestore \
+              --max-items-per-run "$MAX_SSSMC_ITEMS" \
               --publish-firestore \
               --max-firestore-writes 4000
           fi

@@ -194,6 +194,8 @@ export function formatMetadataSourceBadge(source?: BhajanMetadataSource | string
   switch (source) {
     case 'sairhythms_verified':
       return { label: 'Sai Rhythms Verified', verified: true };
+    case 'sssmediacentre_verified':
+      return { label: 'SSS Media Centre', verified: true };
     case 'youtube_prasanthi_mandir_live':
       return { label: 'Prasanthi Mandir Live', verified: false };
     case 'youtube_sss_bhajans':

@@ -7,6 +7,7 @@ export interface PitchInfo {
 
 export type BhajanMetadataSource =
   | 'sairhythms_verified'
+  | 'sssmediacentre_verified'
   | 'local_inferred'
   | 'community_contributed'
   | 'youtube_prasanthi_mandir_live'
