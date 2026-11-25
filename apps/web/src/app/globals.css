@@ -934,3 +934,52 @@ a:focus-visible {
   line-height: 1.5;
   font-weight: 700;
 }
+
+/* Recording Vault & Visible YouTube Segment Player (>= 320x180px TOS floor) */
+.recording-vault-card {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.yt-player-shell {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.yt-player-frame {
+  width: 100%;
+  min-width: 320px;
+  min-height: 180px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #000;
+}
+
+.yt-player-frame iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.yt-player-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.yt-fallback-box {
+  padding: 0.75rem;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: var(--surface);
+}

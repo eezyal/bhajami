@@ -26,6 +26,7 @@ import {
 import { ThemeToggle } from './ThemeToggle';
 import { AuthDialog, type SessionUser } from './AuthDialog';
 import { SuggestCorrectionDialog } from './SuggestCorrectionDialog';
+import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
 
 interface JamStudioClientProps {
   initialIndex: CatalogIndexPayload;
@@ -314,12 +315,16 @@ export function JamStudioClient({
     [basePitch?.semitoneFromC, semitoneShift],
   );
 
-  // Sync HTML5 audio playback rate
+  // Sync HTML5 audio playback rate & pause HTML5 audio when switching recordings
   useEffect(() => {
     if (mediaAudioRef.current) {
       mediaAudioRef.current.playbackRate = playbackRate;
     }
   }, [playbackRate, selectedRecordingIdx, activeBhajan?.id]);
+
+  useEffect(() => {
+    mediaAudioRef.current?.pause();
+  }, [selectedRecordingIdx, activeBhajan?.id]);
 
   // Manage live Web Audio Sa-Pa-Sa Tanpura drone frequency and gain
   useEffect(() => {
@@ -488,6 +493,11 @@ export function JamStudioClient({
             BhajanDownloader (SSS Media): {catalogIndex.stats.bhajanDownloaderCount} MP3s
           </span>
           <span className="badge">RaviMp3 Archive: {catalogIndex.stats.raviMp3Count} MP3s</span>
+          {(catalogIndex.stats.youtubeVideosCount ?? 0) > 0 && (
+            <span className="badge">
+              YouTube Videos: {catalogIndex.stats.youtubeVideosCount}
+            </span>
+          )}
         </div>
 
         <div className="portal-grid">
@@ -744,7 +754,11 @@ export function JamStudioClient({
                       </span>
                     </div>
                     <label htmlFor="speed-slider" className="field-hint">
-                      Practice Tempo ({Math.round(playbackRate * 100)}%)
+                      Practice Tempo ({Math.round(playbackRate * 100)}%
+                      {activeRecording?.youtubeVideoId
+                        ? ' — YouTube snaps to 0.75x / 1.0x / 1.25x'
+                        : ''}
+                      )
                     </label>
                     <input
                       id="speed-slider"
@@ -758,7 +772,7 @@ export function JamStudioClient({
                     />
                   </div>
 
-                  <div className="control-box">
+                  <div className="control-box recording-vault-card">
                     <div className="control-label">
                       Recording Vault ({activeBhajan.recordings.length} source
                       {activeBhajan.recordings.length === 1 ? '' : 's'})
@@ -778,14 +792,29 @@ export function JamStudioClient({
                             </option>
                           ))}
                         </select>
-                        <audio
-                          ref={mediaAudioRef}
-                          key={activeAudioUrl}
-                          controls
-                          preload="metadata"
-                          src={activeAudioUrl}
-                          style={{ width: '100%', height: '38px' }}
-                        />
+                        {activeRecording?.youtubeVideoId ? (
+                          <YouTubeSegmentPlayer
+                            videoId={activeRecording.youtubeVideoId}
+                            title={activeRecording.label}
+                            startSec={activeRecording.startSec}
+                            endSec={activeRecording.endSec}
+                            embeddable={activeRecording.embeddable}
+                            playbackRate={playbackRate}
+                          />
+                        ) : activeAudioUrl ? (
+                          <audio
+                            ref={mediaAudioRef}
+                            key={activeAudioUrl}
+                            controls
+                            preload="metadata"
+                            src={activeAudioUrl}
+                            style={{ width: '100%', height: '38px' }}
+                          />
+                        ) : (
+                          <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: 0 }}>
+                            Selected recording does not have a playable stream URL in cloud mode.
+                          </p>
+                        )}
                       </>
                     ) : (
                       <p style={{ fontSize: '0.84rem', color: 'var(--muted)', margin: 0 }}>
