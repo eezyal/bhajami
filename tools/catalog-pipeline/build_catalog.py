@@ -57,7 +57,7 @@ DEITY_KEYWORDS = [
     ("Shiva", ("shiva", "shankara", "shambho", "shamboo", "mahadeva", "nataraja", "mahesha", "gangadhara", "arunachala", "linga", "pashupati", "bhootanatha")),
     ("Rama", ("rama", "raghu", "sita", "janaki", "ayodhya", "kausalya", "dasharatha", "kodanda", "raghava")),
     ("Hanuman", ("hanuman", "anjaneya", "maruti", "ramadootha", "rama dootha")),
-    ("Krishna", ("krishna", "govinda", "gopala", "gopal", "madhava", "mukunda", "muralidhara", "murali", "nandalala", "nand ke", "radha", "radhey", "vittala", "vittahla", "panduranga", "narayana", "hari", "keshava", "giridhari", "giridhar", "kanhaiya", "shyam", "shyama", "keshav")),
+    ("Krishna", ("krishna", "govinda", "gopala", "gopal", "madhava", "mukunda", "muralidhara", "murali", "nandalala", "nand ke", "radha", "radhey", "vitthala", "vittala", "panduranga", "narayana", "hari", "keshava", "giridhari", "giridhar", "kanhaiya", "shyam", "shyama", "keshav")),
     ("Sarva Dharma", ("allah", "maula", "jesus", "christ", "buddha", "sarva dharma", "zoroaster", "nanak")),
     ("Sai", ("sai", "parthi", "prasanthi", "prashanthi", "shirdi", "bhagawan", "baba", "sathya")),
 ]
@@ -106,11 +106,14 @@ def infer_deity(title: str) -> str:
     return "Sai"
 
 
-def parse_pitch_info(raw: str, fallback_semitone: int) -> dict[str, Any]:
+def parse_pitch_info_optional(raw: str | None) -> dict[str, Any] | None:
+    if not raw or not raw.strip():
+        return None
     cleaned = raw.strip()
     low = cleaned.lower()
     for semitone, pancham, western in CHROMATIC_STEPS:
-        if pancham.lower() in low:
+        pancham_pattern = re.compile(rf"(^|[^0-9.]){re.escape(pancham.lower())}($|[^a-z0-9])")
+        if pancham_pattern.search(low):
             return {
                 "raw": cleaned or f"{pancham} / {western}",
                 "pancham": pancham,
@@ -126,6 +129,14 @@ def parse_pitch_info(raw: str, fallback_semitone: int) -> dict[str, Any]:
                     "western": western,
                     "semitoneFromC": semitone,
                 }
+    return None
+
+
+def parse_pitch_info(raw: str, fallback_semitone: int) -> dict[str, Any]:
+    parsed = parse_pitch_info_optional(raw)
+    if parsed is not None:
+        return parsed
+    cleaned = raw.strip()
     semitone, pancham, western = CHROMATIC_STEPS[fallback_semitone % 12]
     return {
         "raw": cleaned or f"{pancham} / {western}",
@@ -292,10 +303,10 @@ def parse_sairhythms_song(slug: str, html: str) -> dict[str, Any] | None:
         audio_url = src if src.startswith("http") else f"https://sairhythms.sathyasai.org{src}"
 
     deity = parse_meta_row(html, "deity-row") or infer_deity(title)
-    language = parse_meta_row(html, "language-row") or "Sanskrit / Hindi"
-    beat = parse_meta_row(html, "beat-row") or "8 Beat / Keherwa"
+    language = parse_meta_row(html, "language-row") or ""
+    beat = parse_meta_row(html, "beat-row") or ""
     level = parse_meta_row(html, "level-row") or ""
-    tempo = parse_meta_row(html, "tempo-row") or "Medium"
+    tempo = parse_meta_row(html, "tempo-row") or ""
 
     raga_name = ""
     arohanam = ""
@@ -354,7 +365,7 @@ def parse_sairhythms_song(slug: str, html: str) -> dict[str, Any] | None:
         "deity": deity,
         "language": language,
         "raga": {
-            "name": raga_name or "Traditional",
+            "name": raga_name,
             "arohanam": arohanam or None,
             "avarohanam": avarohanam or None,
             "westernInC": western_c or None,
@@ -362,8 +373,10 @@ def parse_sairhythms_song(slug: str, html: str) -> dict[str, Any] | None:
         "beat": beat,
         "tempo": tempo,
         "level": level or None,
-        "gentsPitch": parse_pitch_info(pitches.get("gents", "2 Pancham / D"), 2),
-        "ladiesPitch": parse_pitch_info(pitches.get("ladies", "6 Pancham / A"), 9),
+        "gentsPitch": parse_pitch_info_optional(pitches.get("gents")),
+        "ladiesPitch": parse_pitch_info_optional(pitches.get("ladies")),
+        "gentsPitchRaw": pitches.get("gents") or None,
+        "ladiesPitchRaw": pitches.get("ladies") or None,
         "firstLineNotes": (
             {"sargam": pitches.get("first_sargam"), "westernInC": pitches.get("first_western")}
             if pitches.get("first_sargam") or pitches.get("first_western")
@@ -371,14 +384,8 @@ def parse_sairhythms_song(slug: str, html: str) -> dict[str, Any] | None:
         ),
         "notesRange": pitches.get("notes_range") or None,
         "meaning": meaning or None,
-        "lyricsSets": lyrics_sets
-        or [
-            {
-                "language": "Sanskrit / Hindi",
-                "script": "roman",
-                "lines": [title],
-            }
-        ],
+        "lyricsSets": lyrics_sets,
+        "lyricsMissing": len(lyrics_sets) == 0,
         "glossary": glossary,
         "recordings": recordings,
         "sheetMusicUrl": sheet_url,
@@ -404,8 +411,12 @@ def match_local_to_bhajan(local_tokens: tuple[str, ...], candidate_tokens_list: 
     return best_idx
 
 
-def build_catalog(slugs: list[str], refresh: bool = False) -> dict[str, Any]:
-    local_items, counts = scan_local_archives()
+def build_catalog(slugs: list[str], refresh: bool = False, include_local_archives: bool = False) -> dict[str, Any]:
+    local_enabled = include_local_archives or (os.environ.get("LOCAL_ARCHIVE_ENABLED", "").lower() == "true")
+    if local_enabled:
+        local_items, counts = scan_local_archives()
+    else:
+        local_items, counts = [], {"bhajanDownloaderCount": 0, "raviMp3Count": 0, "totalLocalRecordings": 0}
     verified_bhajans: list[dict[str, Any]] = []
 
     for slug in slugs:
@@ -449,23 +460,15 @@ def build_catalog(slugs: list[str], refresh: bool = False) -> dict[str, Any]:
                 "slug": slug,
                 "title": title,
                 "deity": infer_deity(title),
-                "language": "Sanskrit / Hindi",
-                "raga": {"name": "Pending Sai Rhythms Sync"},
-                "beat": "8 Beat / Keherwa (Est.)",
-                "tempo": "Medium",
-                "meaning": "Synced from local SSS Media Centre / RaviMp3 archive. Click 'Suggest Lyrics Correction' to enrich lyrics & notation.",
-                "gentsPitch": parse_pitch_info("2 Pancham / D", 2),
-                "ladiesPitch": parse_pitch_info("6 Pancham / A", 9),
-                "lyricsSets": [
-                    {
-                        "language": "Roman (Title Seed)",
-                        "script": "roman",
-                        "lines": [
-                            title,
-                            "(Full verses awaiting Sai Rhythms sync or community submission)",
-                        ],
-                    }
-                ],
+                "language": "",
+                "raga": {"name": ""},
+                "beat": "",
+                "tempo": "",
+                "meaning": None,
+                "gentsPitch": None,
+                "ladiesPitch": None,
+                "lyricsSets": [],
+                "lyricsMissing": True,
                 "glossary": [],
                 "recordings": [item["recording"]],
                 "metadataSource": "local_inferred",
@@ -491,13 +494,14 @@ def build_catalog(slugs: list[str], refresh: bool = False) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build unified bhaJami catalog from local MP3s + Sai Rhythms")
+    parser = argparse.ArgumentParser(description="Build unified bhaJami catalog from Sai Rhythms + opt-in local MP3s")
     parser.add_argument("--slugs", type=str, default=",".join(DEFAULT_PILOT_SLUGS), help="Comma-separated Sai Rhythms slugs")
     parser.add_argument("--refresh", action="store_true", help="Ignore HTML disk cache and re-fetch")
+    parser.add_argument("--include-local-archives", action="store_true", help="Opt-in local MP3 archive scanning")
     args = parser.parse_args()
 
     slugs = [s.strip() for s in args.slugs.split(",") if s.strip()]
-    payload = build_catalog(slugs, refresh=args.refresh)
+    payload = build_catalog(slugs, refresh=args.refresh, include_local_archives=args.include_local_archives)
     OUT_CATALOG.parent.mkdir(parents=True, exist_ok=True)
     OUT_CATALOG.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(payload["stats"], indent=2))

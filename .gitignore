@@ -13,6 +13,8 @@ apps/web/data/uploads/
 tools/catalog-pipeline/.cache/
 tools/catalog-pipeline/*.sqlite*
 tools/catalog-pipeline/*.jsonl
+tools/catalog-pipeline/__pycache__/
+**/__pycache__/
 .DS_Store
 **/.DS_Store
 *.tsbuildinfo

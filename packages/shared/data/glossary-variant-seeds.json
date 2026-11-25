@@ -1,0 +1,467 @@
+{
+  "generatedAt": "2026-11-25T00:10:18Z",
+  "source": "sairhythms_glossary_var",
+  "minSimilarity": 0.78,
+  "count": 51,
+  "seeds": [
+    {
+      "term": "bala",
+      "variant": "baalam",
+      "canonicalTerm": "bala",
+      "canonicalVariant": "balam",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "brahma",
+      "variant": "brahmam",
+      "canonicalTerm": "brahma",
+      "canonicalVariant": "brahmam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "hey-shyama-sundara-hey-sai"
+    },
+    {
+      "term": "chora",
+      "variant": "choram",
+      "canonicalTerm": "chora",
+      "canonicalVariant": "choram",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "dayaka",
+      "variant": "dayakam",
+      "canonicalTerm": "dayaka",
+      "canonicalVariant": "dayakam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "sundara-sundara-vinayaka"
+    },
+    {
+      "term": "deva",
+      "variant": "devam",
+      "canonicalTerm": "deva",
+      "canonicalVariant": "devam",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "gajamukha",
+      "variant": "gajamukham",
+      "canonicalTerm": "gajamukha",
+      "canonicalVariant": "gajamukham",
+      "similarity": 0.9,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "ganesha",
+      "variant": "ganesh",
+      "canonicalTerm": "ganesh",
+      "canonicalVariant": "ganesh",
+      "similarity": 0.9917,
+      "source": "sairhythms_var",
+      "songSlug": "sundara-sundara-vinayaka"
+    },
+    {
+      "term": "giridhar",
+      "variant": "giridhara",
+      "canonicalTerm": "giridhar",
+      "canonicalVariant": "giridhara",
+      "similarity": 0.8889,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "giridhar",
+      "variant": "giridhari",
+      "canonicalTerm": "giridhar",
+      "canonicalVariant": "giridhari",
+      "similarity": 0.8889,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "gopal",
+      "variant": "gopala",
+      "canonicalTerm": "gopal",
+      "canonicalVariant": "gopal",
+      "similarity": 0.99,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "jagat",
+      "variant": "jaga",
+      "canonicalTerm": "jagat",
+      "canonicalVariant": "jaga",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "jagat",
+      "variant": "jagath",
+      "canonicalTerm": "jagat",
+      "canonicalVariant": "jagath",
+      "similarity": 0.9667,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "jagat",
+      "variant": "jagatha",
+      "canonicalTerm": "jagat",
+      "canonicalVariant": "jagatha",
+      "similarity": 0.8286,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "jaya",
+      "variant": "jayam",
+      "canonicalTerm": "jaya",
+      "canonicalVariant": "jayam",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "adi-narayana-sai-narayana"
+    },
+    {
+      "term": "karuna",
+      "variant": "karunya",
+      "canonicalTerm": "karuna",
+      "canonicalVariant": "karunya",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "krupalu",
+      "variant": "krupala",
+      "canonicalTerm": "krupalu",
+      "canonicalVariant": "krupala",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "mahavira",
+      "variant": "mahavir",
+      "canonicalTerm": "mahavira",
+      "canonicalVariant": "mahavir",
+      "similarity": 0.875,
+      "source": "sairhythms_var",
+      "songSlug": "sarva-dharma-priya-deva"
+    },
+    {
+      "term": "mangal",
+      "variant": "mangala",
+      "canonicalTerm": "mangal",
+      "canonicalVariant": "mangala",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "sundara-sundara-vinayaka"
+    },
+    {
+      "term": "manohar",
+      "variant": "manohara",
+      "canonicalTerm": "manohar",
+      "canonicalVariant": "manohara",
+      "similarity": 0.875,
+      "source": "sairhythms_var",
+      "songSlug": "arunachala-shiva"
+    },
+    {
+      "term": "mohana",
+      "variant": "mohanam",
+      "canonicalTerm": "mohana",
+      "canonicalVariant": "mohanam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "nandalala",
+      "variant": "nandalal",
+      "canonicalTerm": "nandalala",
+      "canonicalVariant": "nandalal",
+      "similarity": 0.8889,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "nandana",
+      "variant": "nandan",
+      "canonicalTerm": "nandana",
+      "canonicalVariant": "nandan",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "nandana",
+      "variant": "nandanam",
+      "canonicalTerm": "nandana",
+      "canonicalVariant": "nandanam",
+      "similarity": 0.875,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "narayana",
+      "variant": "narayan",
+      "canonicalTerm": "narayan",
+      "canonicalVariant": "narayan",
+      "similarity": 0.9929,
+      "source": "sairhythms_var",
+      "songSlug": "adi-narayana-sai-narayana"
+    },
+    {
+      "term": "nayaka",
+      "variant": "nayaga",
+      "canonicalTerm": "nayaka",
+      "canonicalVariant": "nayaga",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "hey-shyama-sundara-hey-sai"
+    },
+    {
+      "term": "niranjan",
+      "variant": "niranjana",
+      "canonicalTerm": "niranjan",
+      "canonicalVariant": "niranjana",
+      "similarity": 0.8889,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "parama",
+      "variant": "param",
+      "canonicalTerm": "parama",
+      "canonicalVariant": "param",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "parama",
+      "variant": "paramam",
+      "canonicalTerm": "parama",
+      "canonicalVariant": "paramam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "partheeshwara",
+      "variant": "partheeshwaraya",
+      "canonicalTerm": "parthishvara",
+      "canonicalVariant": "parthishvaraya",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "pureeshwara",
+      "variant": "purishwara",
+      "canonicalTerm": "purishvara",
+      "canonicalVariant": "purishvara",
+      "similarity": 1.0,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "rama",
+      "variant": "ram",
+      "canonicalTerm": "ram",
+      "canonicalVariant": "ram",
+      "similarity": 0.9833,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "roopa",
+      "variant": "roopam",
+      "canonicalTerm": "rupa",
+      "canonicalVariant": "rupam",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "guru-deva-guru-govinda"
+    },
+    {
+      "term": "sarva",
+      "variant": "sarvam",
+      "canonicalTerm": "sarva",
+      "canonicalVariant": "sarvam",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "sarva-dharma-priya-deva"
+    },
+    {
+      "term": "sathya",
+      "variant": "sathyam",
+      "canonicalTerm": "sathya",
+      "canonicalVariant": "sathyam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "sarva-dharma-priya-deva"
+    },
+    {
+      "term": "sham",
+      "variant": "shyam",
+      "canonicalTerm": "sham",
+      "canonicalVariant": "shyam",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "shambho",
+      "variant": "shambhu",
+      "canonicalTerm": "shambho",
+      "canonicalVariant": "shambhu",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "shiva-shiva-shivaya-namah-om"
+    },
+    {
+      "term": "shankara",
+      "variant": "shankar",
+      "canonicalTerm": "shankara",
+      "canonicalVariant": "shankar",
+      "similarity": 0.875,
+      "source": "sairhythms_var",
+      "songSlug": "arunachala-shiva"
+    },
+    {
+      "term": "shankara",
+      "variant": "shankaram",
+      "canonicalTerm": "shankara",
+      "canonicalVariant": "shankaram",
+      "similarity": 0.8889,
+      "source": "sairhythms_var",
+      "songSlug": "arunachala-shiva"
+    },
+    {
+      "term": "shankara",
+      "variant": "shankaraya",
+      "canonicalTerm": "shankara",
+      "canonicalVariant": "shankaraya",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "arunachala-shiva"
+    },
+    {
+      "term": "shiva",
+      "variant": "shiv",
+      "canonicalTerm": "shiva",
+      "canonicalVariant": "shiv",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "arunachala-shiva"
+    },
+    {
+      "term": "shubh",
+      "variant": "shubha",
+      "canonicalTerm": "shubh",
+      "canonicalVariant": "shubha",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "sundara-sundara-vinayaka"
+    },
+    {
+      "term": "sindhu",
+      "variant": "sindho",
+      "canonicalTerm": "sindhu",
+      "canonicalVariant": "sindho",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "tanaya",
+      "variant": "tanayam",
+      "canonicalTerm": "tanaya",
+      "canonicalVariant": "tanayam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "tanaya",
+      "variant": "tanaye",
+      "canonicalTerm": "tanaya",
+      "canonicalVariant": "tanaye",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "vandana",
+      "variant": "vandanam",
+      "canonicalTerm": "vandana",
+      "canonicalVariant": "vandanam",
+      "similarity": 0.875,
+      "source": "sairhythms_var",
+      "songSlug": "gajanana-hey-gajanana"
+    },
+    {
+      "term": "varada",
+      "variant": "varana",
+      "canonicalTerm": "varada",
+      "canonicalVariant": "varana",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "adi-narayana-sai-narayana"
+    },
+    {
+      "term": "vasa",
+      "variant": "vaasam",
+      "canonicalTerm": "vasa",
+      "canonicalVariant": "vasam",
+      "similarity": 0.8,
+      "source": "sairhythms_var",
+      "songSlug": "adi-narayana-sai-narayana"
+    },
+    {
+      "term": "vimala",
+      "variant": "vimale",
+      "canonicalTerm": "vimala",
+      "canonicalVariant": "vimale",
+      "similarity": 0.8333,
+      "source": "sairhythms_var",
+      "songSlug": "sundara-sundara-vinayaka"
+    },
+    {
+      "term": "vishwa",
+      "variant": "vishwam",
+      "canonicalTerm": "vishva",
+      "canonicalVariant": "vishvam",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "sarva-dharma-priya-deva"
+    },
+    {
+      "term": "yashoda",
+      "variant": "yashode",
+      "canonicalTerm": "yashoda",
+      "canonicalVariant": "yashode",
+      "similarity": 0.8571,
+      "source": "sairhythms_var",
+      "songSlug": "aao-aao-nandalala"
+    },
+    {
+      "term": "yesu",
+      "variant": "yeshu",
+      "canonicalTerm": "yesu",
+      "canonicalVariant": "yeshu",
+      "similarity": 0.95,
+      "source": "sairhythms_var",
+      "songSlug": "sarva-dharma-priya-deva"
+    }
+  ]
+}
