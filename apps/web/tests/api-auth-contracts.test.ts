@@ -6,6 +6,7 @@ import { afterEach, describe, it } from 'node:test';
 import { NextRequest } from 'next/server';
 import type { Bhajan } from '@bhajami/shared';
 import {
+  isAdminIdentity,
   verifyAdminBearerToken,
   verifyUserBearerToken,
 } from '../src/lib/firebase-admin';
@@ -96,6 +97,29 @@ describe('Phase 1 cloud config & server auth verification', () => {
     const badAdmin = await verifyAdminBearerToken('Bearer invalid.jwt.token');
     assert.equal(badAdmin.ok, false);
     if (!badAdmin.ok) assert.equal(badAdmin.status, 401);
+  });
+
+  it('grants admin only to verified primary admin email (case-insensitive) or custom admin claim', () => {
+    assert.equal(
+      isAdminIdentity({ email: 'pschax@gmail.com', emailVerified: true }),
+      true,
+    );
+    assert.equal(
+      isAdminIdentity({ email: '  PSCHAX@GMAIL.COM ', emailVerified: true }),
+      true,
+    );
+    assert.equal(
+      isAdminIdentity({ email: 'pschax@gmail.com', emailVerified: false }),
+      false,
+    );
+    assert.equal(
+      isAdminIdentity({ email: 'other@gmail.com', emailVerified: true }),
+      false,
+    );
+    assert.equal(
+      isAdminIdentity({ email: 'other@gmail.com', emailVerified: true, adminClaim: true }),
+      true,
+    );
   });
 
   it('returns 401 for unauthenticated protected routes when hasCloudConfig() is true', async () => {

@@ -17,7 +17,7 @@ import { getCurrentFirebaseIdToken, getFirebaseClientAuth } from '@/lib/firebase
 import { ThemeToggle } from './ThemeToggle';
 import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
 
-const ADMIN_EMAIL = process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'pschax@gmail.com';
+const ADMIN_EMAIL = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'pschax@gmail.com').trim().toLowerCase();
 
 type AdminTab =
   | 'pending'
@@ -35,6 +35,7 @@ interface AdminModerationClientProps {
   initialOutbox: OutboxEmailRecord[];
   initialRevisions: BhajanRevision[];
   initialSelectedId?: string;
+  cloudMode?: boolean;
 }
 
 function submissionTypeLabel(submissionType?: SubmissionType): string {
@@ -56,11 +57,14 @@ export function AdminModerationClient({
   initialOutbox,
   initialRevisions,
   initialSelectedId,
+  cloudMode = false,
 }: AdminModerationClientProps) {
   const [corrections, setCorrections] = useState(initialCorrections);
   const [outbox, setOutbox] = useState(initialOutbox);
   const [revisions, setRevisions] = useState(initialRevisions);
   const [activeTab, setActiveTab] = useState<AdminTab>('pending');
+  const [authResolved, setAuthResolved] = useState(!cloudMode);
+  const [isAuthorizedAdmin, setIsAuthorizedAdmin] = useState(!cloudMode);
 
   const [selectedId, setSelectedId] = useState<string>(
     initialSelectedId ||
@@ -186,12 +190,13 @@ export function AdminModerationClient({
   );
 
   useEffect(() => {
+    if (cloudMode && !isAuthorizedAdmin) return;
     if (activeTab === 'daily_curation') {
       void loadCurationData(curationView);
     } else if (activeTab === 'pipeline_health') {
       void loadCurationData('runs');
     }
-  }, [activeTab, curationView, loadCurationData]);
+  }, [activeTab, cloudMode, curationView, isAuthorizedAdmin, loadCurationData]);
 
   const selectedCurationItem = useMemo(
     () =>
@@ -236,19 +241,40 @@ export function AdminModerationClient({
 
   useEffect(() => {
     const fb = getFirebaseClientAuth();
-    if (!fb) return;
+    if (!fb) {
+      setAuthResolved(true);
+      if (cloudMode) setIsAuthorizedAdmin(false);
+      return;
+    }
     return onAuthStateChanged(fb.auth, async (u) => {
+      const tokenResult = u ? await u.getIdTokenResult().catch(() => null) : null;
+      const normalizedEmail = (u?.email || '').trim().toLowerCase();
+      const authorized = Boolean(
+        u &&
+          !u.isAnonymous &&
+          (tokenResult?.claims?.admin === true ||
+            (normalizedEmail === ADMIN_EMAIL && u.emailVerified)),
+      );
       setAdminEmail(u?.email ?? null);
-      if (u) {
+      setIsAuthorizedAdmin(authorized || !cloudMode);
+      setAuthResolved(true);
+
+      if (u && (authorized || !cloudMode)) {
         try {
           const tok = await u.getIdToken();
           await reloadAll(tok);
         } catch {
           // Keep current state if token fetch fails
         }
+      } else if (cloudMode) {
+        setCorrections([]);
+        setOutbox([]);
+        setRevisions([]);
+        setCurationItems([]);
+        setPipelineRuns([]);
       }
     });
-  }, []);
+  }, [cloudMode]);
 
   const editedLines = useMemo(
     () =>
@@ -444,7 +470,7 @@ export function AdminModerationClient({
                   if (fb) await signOut(fb.auth);
                 }}
               >
-                Cloud Firestore: {adminEmail} (Sign out)
+                {isAuthorizedAdmin ? `Admin: ${adminEmail}` : `Signed in: ${adminEmail}`} (Sign out)
               </button>
             ) : (
               <button
@@ -472,6 +498,67 @@ export function AdminModerationClient({
       </header>
 
       <main className="portal-shell">
+        {cloudMode && !isAuthorizedAdmin ? (
+          <section className="card" style={{ maxWidth: '640px', marginInline: 'auto' }}>
+            {!authResolved ? (
+              <p className="field-hint" style={{ margin: 0 }}>
+                Checking admin session…
+              </p>
+            ) : !adminEmail ? (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <h1 style={{ margin: 0, fontSize: '1.3rem' }}>Admin Sign-In Required</h1>
+                <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.92rem' }}>
+                  Moderation and catalog curation are restricted to the verified admin account (
+                  <strong>{ADMIN_EMAIL}</strong>).
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      const fb = getFirebaseClientAuth();
+                      if (!fb) return;
+                      try {
+                        await signInWithPopup(fb.auth, fb.googleProvider);
+                      } catch (err) {
+                        setBanner(err instanceof Error ? err.message : 'Google Sign-In failed');
+                      }
+                    }}
+                  >
+                    Sign in with Google
+                  </button>
+                  <Link href="/" className="btn">
+                    Back to Jam Studio
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: '0.75rem' }}>
+                <h1 style={{ margin: 0, fontSize: '1.3rem' }}>Admin Access Restricted</h1>
+                <p style={{ margin: 0, color: 'var(--muted)', fontSize: '0.92rem' }}>
+                  Signed in as <strong>{adminEmail}</strong>. Only verified{' '}
+                  <strong>{ADMIN_EMAIL}</strong> has admin privileges to view or moderate queues.
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={async () => {
+                      const fb = getFirebaseClientAuth();
+                      if (fb) await signOut(fb.auth);
+                    }}
+                  >
+                    Sign Out &amp; Switch Account
+                  </button>
+                  <Link href="/" className="btn">
+                    Back to Jam Studio
+                  </Link>
+                </div>
+              </div>
+            )}
+          </section>
+        ) : (
+          <>
         <div className="stats-strip">
           <span className="badge badge-pending">
             Waiting for Approval: {pendingList.length}
@@ -1503,6 +1590,8 @@ export function AdminModerationClient({
             </div>
           </section>
         ) : null}
+          </>
+        )}
       </main>
     </>
   );

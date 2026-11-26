@@ -25,6 +25,7 @@ export default async function AdminCorrectionsPage({
       initialOutbox={outbox}
       initialRevisions={revisions}
       initialSelectedId={params.selected}
+      cloudMode={cloud}
     />
   );
 }

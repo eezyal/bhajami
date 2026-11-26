@@ -11,9 +11,23 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { logEvent } from './logger';
 
-export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'pschax@gmail.com';
+export const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'pschax@gmail.com').trim().toLowerCase();
 const FIREBASE_PROJECT_ID = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'saibhajanverse';
 const AUTH_VERIFIER_APP_NAME = 'bhajami-auth-verifier';
+
+/**
+ * Returns true when an authenticated identity matches the verified primary admin email
+ * or holds the Firebase `admin: true` custom claim.
+ */
+export function isAdminIdentity(params: {
+  email?: string | null;
+  emailVerified?: boolean;
+  adminClaim?: boolean;
+}): boolean {
+  if (params.adminClaim === true) return true;
+  const normalized = typeof params.email === 'string' ? params.email.trim().toLowerCase() : '';
+  return Boolean(normalized && normalized === ADMIN_EMAIL && params.emailVerified === true);
+}
 
 let cachedDb: Firestore | null | undefined;
 let hasFirestoreCredentials: boolean | null = null;
@@ -188,8 +202,11 @@ export async function verifyUserBearerToken(
 
     const email = typeof decoded.email === 'string' ? decoded.email : null;
     const emailVerified = decoded.email_verified === true;
-    const isAdmin =
-      decoded.admin === true || (email === ADMIN_EMAIL && emailVerified);
+    const isAdmin = isAdminIdentity({
+      email,
+      emailVerified,
+      adminClaim: decoded.admin === true,
+    });
 
     return {
       ok: true,

@@ -9,11 +9,31 @@ import {
 } from 'firebase/auth';
 import { getFirebaseClientAuth, isFirebaseClientConfigured } from '@/lib/firebase-client';
 
+export const PRIMARY_ADMIN_EMAIL = (
+  process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'pschax@gmail.com'
+)
+  .trim()
+  .toLowerCase();
+
 export interface SessionUser {
   name: string;
   email: string;
   uid?: string | null;
   provider: 'guest' | 'google' | 'email';
+  emailVerified?: boolean;
+  isAdmin?: boolean;
+}
+
+/**
+ * Returns true when the signed-in session user is the verified primary admin (`pschax@gmail.com`)
+ * or carries the Firebase `admin: true` claim.
+ */
+export function isSessionUserAdmin(user: SessionUser | null, cloudMode: boolean): boolean {
+  if (!user || user.provider === 'guest') return false;
+  if (user.isAdmin === true) return true;
+  const normalized = user.email.trim().toLowerCase();
+  if (!normalized || normalized !== PRIMARY_ADMIN_EMAIL) return false;
+  return cloudMode ? user.emailVerified === true : true;
 }
 
 interface AuthDialogProps {
@@ -114,11 +134,19 @@ export function AuthDialog({
     if (fb) {
       try {
         const result = await signInWithPopup(fb.auth, fb.googleProvider);
+        const tokenResult = await result.user.getIdTokenResult().catch(() => null);
+        const signedEmail = result.user.email || '';
+        const isAdmin = Boolean(
+          tokenResult?.claims?.admin === true ||
+            (signedEmail.trim().toLowerCase() === PRIMARY_ADMIN_EMAIL && result.user.emailVerified),
+        );
         onSignedIn({
           name: result.user.displayName || 'Sai Devotee',
-          email: result.user.email || '',
+          email: signedEmail,
           uid: result.user.uid,
           provider: 'google',
+          emailVerified: result.user.emailVerified,
+          isAdmin,
         });
         setBusy(false);
         dialogRef.current?.close();
@@ -143,6 +171,8 @@ export function AuthDialog({
       email: 'pschax@gmail.com',
       uid: 'local-admin-preview',
       provider: 'google',
+      emailVerified: true,
+      isAdmin: true,
     });
     setBusy(false);
     dialogRef.current?.close();
@@ -163,11 +193,19 @@ export function AuthDialog({
           mode === 'register'
             ? await createUserWithEmailAndPassword(fb.auth, email, password)
             : await signInWithEmailAndPassword(fb.auth, email, password);
+        const tokenResult = await cred.user.getIdTokenResult().catch(() => null);
+        const signedEmail = cred.user.email || email;
+        const isAdmin = Boolean(
+          tokenResult?.claims?.admin === true ||
+            (signedEmail.trim().toLowerCase() === PRIMARY_ADMIN_EMAIL && cred.user.emailVerified),
+        );
         onSignedIn({
           name: displayName.trim() || cred.user.displayName || email.split('@')[0],
-          email: cred.user.email || email,
+          email: signedEmail,
           uid: cred.user.uid,
           provider: 'email',
+          emailVerified: cred.user.emailVerified,
+          isAdmin,
         });
         setBusy(false);
         dialogRef.current?.close();
@@ -243,6 +281,11 @@ export function AuthDialog({
             <div className="control-label">Currently Signed In</div>
             <p style={{ margin: '0 0 0.75rem 0' }}>
               <strong>{user.name}</strong> ({user.email}) · via {user.provider}
+              {isSessionUserAdmin(user, isCloud) && (
+                <span className="badge badge-verified" style={{ marginLeft: '0.45rem' }}>
+                  Admin
+                </span>
+              )}
             </p>
             <button type="button" className="btn btn-danger btn-sm" onClick={handleSignOut}>
               Sign Out

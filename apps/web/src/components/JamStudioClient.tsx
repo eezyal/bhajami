@@ -41,7 +41,12 @@ import {
   syncSaveUserFavorites,
 } from '@/lib/user-library';
 import { ThemeToggle } from './ThemeToggle';
-import { AuthDialog, type SessionUser } from './AuthDialog';
+import {
+  AuthDialog,
+  isSessionUserAdmin,
+  PRIMARY_ADMIN_EMAIL,
+  type SessionUser,
+} from './AuthDialog';
 import { SuggestCorrectionDialog } from './SuggestCorrectionDialog';
 import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
 import { StreamRadioView } from './StreamRadioView';
@@ -178,21 +183,36 @@ export function JamStudioClient({
   useEffect(() => {
     const fb = getFirebaseClientAuth();
     if (!fb) return;
+    let cancelled = false;
     const unsub = onAuthStateChanged(fb.auth, (fbUser) => {
       if (fbUser && !fbUser.isAnonymous) {
-        setUser({
-          name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Sai Devotee',
-          email: fbUser.email || '',
-          uid: fbUser.uid,
-          provider: fbUser.providerData.some((p) => p.providerId === 'google.com')
-            ? 'google'
-            : 'email',
-        });
+        void (async () => {
+          const tokenResult = await fbUser.getIdTokenResult().catch(() => null);
+          if (cancelled) return;
+          const signedEmail = fbUser.email || '';
+          const isAdmin = Boolean(
+            tokenResult?.claims?.admin === true ||
+              (signedEmail.trim().toLowerCase() === PRIMARY_ADMIN_EMAIL && fbUser.emailVerified),
+          );
+          setUser({
+            name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Sai Devotee',
+            email: signedEmail,
+            uid: fbUser.uid,
+            provider: fbUser.providerData.some((p) => p.providerId === 'google.com')
+              ? 'google'
+              : 'email',
+            emailVerified: fbUser.emailVerified,
+            isAdmin,
+          });
+        })();
       } else if (fbUser === null && cloudMode) {
         setUser(null);
       }
     });
-    return () => unsub();
+    return () => {
+      cancelled = true;
+      unsub();
+    };
   }, [cloudMode]);
 
   // Hydrate liked playlist from localStorage and sync with Firestore `users/{uid}` when signed in
@@ -787,6 +807,8 @@ export function JamStudioClient({
     openContributionModal(targetMode, missingFields);
   };
 
+  const isAdminUser = isSessionUserAdmin(user, cloudMode);
+
   return (
     <>
       <header className="top-header">
@@ -841,12 +863,14 @@ export function JamStudioClient({
           </nav>
 
           <div className="header-actions">
-            <Link href="/admin/corrections" className="btn">
-              Admin Queue
-              {pendingCount > 0 ? (
-                <span className="badge badge-pending">{pendingCount} waiting</span>
-              ) : null}
-            </Link>
+            {isAdminUser && (
+              <Link href="/admin/corrections" className="btn">
+                Admin Queue
+                {pendingCount > 0 ? (
+                  <span className="badge badge-pending">{pendingCount} waiting</span>
+                ) : null}
+              </Link>
+            )}
             <ThemeToggle />
             <button
               type="button"
