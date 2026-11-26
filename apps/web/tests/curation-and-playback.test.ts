@@ -507,5 +507,13 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
     assert.match(mobileAppSrc, /\[showMiniLyrics, setShowMiniLyrics\] = useState\(false\)/);
     assert.match(mobileAppSrc, /Show Lyrics/);
     assert.match(mobileAppSrc, /Hide Lyrics/);
+
+    // Guard against useEffect self-cancellation when fetching target bhajans for merge candidates
+    const adminModSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'apps/web/src/components/AdminModerationClient.tsx'),
+      'utf-8',
+    );
+    assert.match(adminModSrc, /fetchedTargetIdsRef/);
+    assert.doesNotMatch(adminModSrc, /\},\s*\[candidateTargets,\s*selectedCurationItem\]\)/);
   });
 });

@@ -671,10 +671,15 @@ def publish_duplicate_candidates_to_firestore(
             if prev is None or float(c["score"]) >= float(prev.get("score") or 0.0):
                 merged_by_target[tid] = c
 
-        top_cands = sorted(
-            merged_by_target.values(),
-            key=lambda item: (-float(item["score"]), str(item["targetBhajanId"])),
-        )[:5]
+        def _cand_sort_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+            tid = str(item["targetBhajanId"])
+            tdoc = docs_by_id.get(tid)
+            if tdoc is not None:
+                pk = target_priority_key(tdoc)
+                return (-float(item["score"]), tuple(-int(v) for v in pk[:-1]), str(pk[-1]))
+            return (-float(item["score"]), (0,), tid)
+
+        top_cands = sorted(merged_by_target.values(), key=_cand_sort_key)[:5]
 
         # Skip redundant write if status and candidate IDs+scores already match
         existing_top = [

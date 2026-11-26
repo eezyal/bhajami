@@ -137,6 +137,15 @@ export function AdminModerationClient({
     Record<string, string>
   >({});
   const [duplicateLog, setDuplicateLog] = useState<DuplicateClearanceLogEntry[]>([]);
+  const fetchedTargetIdsRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const pendingList = useMemo(
     () => corrections.filter((c) => c.status === 'pending'),
@@ -279,11 +288,11 @@ export function AdminModerationClient({
     const candidates = selectedCurationItem?.matchCandidates ?? [];
     if (candidates.length === 0) return;
 
-    let cancelled = false;
     for (const cand of candidates) {
       const targetId = cand.targetBhajanId;
-      if (!targetId || candidateTargets[targetId] !== undefined) continue;
+      if (!targetId || fetchedTargetIdsRef.current.has(targetId)) continue;
 
+      fetchedTargetIdsRef.current.add(targetId);
       setCandidateTargets((prev) => ({ ...prev, [targetId]: 'loading' }));
       void fetch(`/api/bhajans/${encodeURIComponent(targetId)}`, { cache: 'no-store' })
         .then(async (res) => {
@@ -293,15 +302,14 @@ export function AdminModerationClient({
         })
         .catch(() => null)
         .then((bhajanDoc) => {
-          if (cancelled) return;
+          if (!mountedRef.current) return;
+          if (!bhajanDoc) {
+            fetchedTargetIdsRef.current.delete(targetId);
+          }
           setCandidateTargets((prev) => ({ ...prev, [targetId]: bhajanDoc }));
         });
     }
-
-    return () => {
-      cancelled = true;
-    };
-  }, [candidateTargets, selectedCurationItem]);
+  }, [selectedCurationItem]);
 
   const reloadAll = async (explicitToken?: string | null) => {
     const token = explicitToken !== undefined ? explicitToken : await getCurrentFirebaseIdToken();
@@ -497,6 +505,16 @@ export function AdminModerationClient({
         setCurationError(json.error || 'Curation action failed.');
         setActionBusy(false);
         return false;
+      }
+      if (body.action === 'approve_merge' && typeof body.targetBhajanId === 'string') {
+        const mergedTargetId = body.targetBhajanId;
+        fetchedTargetIdsRef.current.delete(mergedTargetId);
+        setCandidateTargets((prev) => {
+          if (!(mergedTargetId in prev)) return prev;
+          const next = { ...prev };
+          delete next[mergedTargetId];
+          return next;
+        });
       }
       await loadCurationData(curationView, token);
       setBanner(successMsg);
@@ -1286,14 +1304,24 @@ export function AdminModerationClient({
                                 string,
                                 { rec: RecordingSource; origin: string }
                               >();
+                              const recDedupKey = (rec: RecordingSource) =>
+                                rec.youtubeVideoId
+                                  ? `yt:${rec.youtubeVideoId}`
+                                  : rec.externalUrl || rec.localPath || rec.id;
+
                               for (const rec of targetDoc?.recordings ?? []) {
-                                if (!combinedMap.has(rec.id)) {
-                                  combinedMap.set(rec.id, { rec, origin: 'Keep Target' });
+                                const k = recDedupKey(rec);
+                                if (!combinedMap.has(k)) {
+                                  combinedMap.set(k, { rec, origin: 'Keep Target' });
                                 }
                               }
                               for (const rec of selectedCurationItem.recordings ?? []) {
-                                if (!combinedMap.has(rec.id)) {
-                                  combinedMap.set(rec.id, { rec, origin: 'Incoming Duplicate' });
+                                const k = recDedupKey(rec);
+                                const existing = combinedMap.get(k);
+                                if (!existing) {
+                                  combinedMap.set(k, { rec, origin: 'Incoming Duplicate' });
+                                } else if (existing.origin === 'Keep Target') {
+                                  existing.origin = 'Keep Target & Incoming (Shared)';
                                 }
                               }
                               const combinedRecordings = Array.from(combinedMap.values());
@@ -1321,11 +1349,12 @@ export function AdminModerationClient({
                                     }}
                                   >
                                     <div>
-                                      <strong>{cand.targetTitle}</strong> (
+                                      <strong>{cand.targetTitle}</strong>{' '}
+                                      <code style={{ fontSize: '0.78rem' }}>{cand.targetBhajanId}</code> (
                                       {(cand.score * 100).toFixed(1)}% · {cand.reason})
                                       {targetDoc ? (
                                         <div className="field-hint" style={{ margin: '0.15rem 0 0' }}>
-                                          Target: {[
+                                          Target ({targetDoc.metadataSource}): {[
                                             targetDoc.deity,
                                             targetDoc.raga?.name,
                                             `${targetDoc.lyricsSets?.[0]?.lines?.length ?? 0} lyrics lines`,
@@ -1333,14 +1362,18 @@ export function AdminModerationClient({
                                           ]
                                             .filter(Boolean)
                                             .join(' · ')}{' '}
-                                          | Source:{' '}
+                                          | Source ({selectedCurationItem.metadataSource}):{' '}
                                           {`${selectedCurationItem.lyricsSets?.[0]?.lines?.length ?? 0} lyrics lines · ${selectedCurationItem.recordings?.length ?? 0} media`}
                                         </div>
-                                      ) : targetState === 'loading' ? (
+                                      ) : !targetLoaded ? (
                                         <div className="field-hint" style={{ margin: '0.15rem 0 0' }}>
                                           Loading target versions for merge comparison…
                                         </div>
-                                      ) : null}
+                                      ) : (
+                                        <div className="field-hint" style={{ margin: '0.15rem 0 0', color: 'var(--danger)' }}>
+                                          Target bhajan could not be loaded (it may already have been merged or removed).
+                                        </div>
+                                      )}
                                     </div>
                                     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                       <button
@@ -1443,7 +1476,11 @@ export function AdminModerationClient({
                                     </div>
                                   </div>
 
-                                  {combinedRecordings.length > 0 && (
+                                  {!targetLoaded ? (
+                                    <p className="field-hint" style={{ margin: 0 }}>
+                                      Fetching target audio/video versions…
+                                    </p>
+                                  ) : combinedRecordings.length > 0 && (
                                     <fieldset className="merge-default-fieldset">
                                       <legend className="merge-default-legend">
                                         Select Default Version for Stream (Required) — all other recordings remain available under More Versions
