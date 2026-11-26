@@ -279,6 +279,96 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         self.assertEqual(projected["title"], "Shankara Shankara Sada Shiva")
         self.assertFalse(projected["lyricsMissing"])
 
+    def test_strip_prasanthi_mandir_schedule_and_channel_footers(self) -> None:
+        import normalize_legacy_youtube_docs as norm
+
+        description = "\n".join(
+            [
+                "Prasanthi Mandir Live: Sathya Swaroopini Ma",
+                "Lyrics -",
+                "Sathya Swaroopini Ma Sai Prema Swaroopini Ma",
+                "Ananda Roopini Ma Sai Atma Swaroopini Ma",
+                "Regular Prasanthi Mandir Schedule (IST)",
+                "Morning",
+                "Veda Chanting: 8:00 am to  9:00 am",
+                "Bhajans: 9:00 am – 9:30 am",
+                "Mangala Arati & Sai Gayatri",
+                "Evening",
+                "Veda Chanting: 4:30 pm – 5:15 pm",
+                "Bhajans: 5:15 pm – 6:00 pm",
+                "Mangala Arati & Sai Gayatri",
+            ]
+        )
+        self.assertEqual(
+            yt.extract_mandir_lyrics(description),
+            [
+                "Sathya Swaroopini Ma Sai Prema Swaroopini Ma",
+                "Ananda Roopini Ma Sai Atma Swaroopini Ma",
+            ],
+        )
+
+        # Preserve authentic lyric lines containing ordinary words like Morning/Evening
+        mixed_lines = [
+            "Morning and evening sing the Lord's name",
+            "Jaya Guru Omkara Jaya Jaya Sadguru Omkara",
+            "For feedback or any queries, please write to us at listener@sssmediacentre.org",
+            "Our Digital Footprint :",
+            "Website - https://www.sssmediacentre.org",
+        ]
+        self.assertEqual(
+            yt.strip_youtube_lyrics_footer(mixed_lines),
+            [
+                "Morning and evening sing the Lord's name",
+                "Jaya Guru Omkara Jaya Jaya Sadguru Omkara",
+            ],
+        )
+
+        dirty_doc = {
+            "id": "yt_-AbRphrr8AM",
+            "slug": "yt_-AbRphrr8AM",
+            "title": "Sathya Swaroopini Ma Sai Prema Swaroopini Ma",
+            "metadataSource": "youtube_prasanthi_mandir_live",
+            "lyricsSets": [
+                {
+                    "language": "Roman",
+                    "script": "roman",
+                    "lines": [
+                        "Sathya Swaroopini Ma Sai Prema Swaroopini Ma",
+                        "Ananda Roopini Ma Sai Atma Swaroopini Ma",
+                        "Regular Prasanthi Mandir Schedule (IST)",
+                        "Morning",
+                        "Veda Chanting: 8:00 am to  9:00 am",
+                        "Bhajans: 9:00 am – 9:30 am",
+                    ],
+                }
+            ],
+            "recordings": [
+                {
+                    "id": "yt_-AbRphrr8AM",
+                    "label": "Prasanthi Mandir Live: Sathya Swaroopini Ma Sai Prema Swaroopini Ma",
+                    "collection": "youtube_prasanthi_mandir_live",
+                    "youtubeVideoId": "-AbRphrr8AM",
+                    "embeddable": True,
+                }
+            ],
+            "missingFields": ["meaning", "deity", "raga", "tempo"],
+        }
+        cleaned = norm.normalize_bhajan_doc("yt_-AbRphrr8AM", dirty_doc, now_iso="2026-11-26T16:45:00Z")
+        self.assertIsNotNone(cleaned)
+        assert cleaned is not None
+        self.assertEqual(
+            cleaned["lyricsSets"][0]["lines"],
+            [
+                "Sathya Swaroopini Ma Sai Prema Swaroopini Ma",
+                "Ananda Roopini Ma Sai Atma Swaroopini Ma",
+            ],
+        )
+        self.assertFalse(cleaned["lyricsMissing"])
+        self.assertIsNone(norm.normalize_bhajan_doc("yt_-AbRphrr8AM", cleaned, now_iso="2026-11-26T16:46:00Z"))
+
+        override_dirty = {**dirty_doc, "bhajamiOverride": True}
+        self.assertIsNone(norm.normalize_bhajan_doc("yt_-AbRphrr8AM", override_dirty, now_iso="2026-11-26T16:46:00Z"))
+
 
 if __name__ == "__main__":
     unittest.main()

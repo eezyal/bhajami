@@ -123,16 +123,42 @@ def normalize_bhajan_doc(
         updated["recordings"] = recordings
         changed = True
 
-    lyrics_sets = list(updated.get("lyricsSets") or [])
+    raw_lyrics_sets = list(updated.get("lyricsSets") or [])
+    cleaned_lyrics_sets: list[dict[str, Any]] = []
+    lyrics_sets_changed = False
+    for ls in raw_lyrics_sets:
+        if not isinstance(ls, dict):
+            lyrics_sets_changed = True
+            continue
+        orig_lines = [str(ln) for ln in (ls.get("lines") or [])]
+        cleaned_lines = yt_sync.strip_youtube_lyrics_footer(orig_lines)
+        if cleaned_lines != orig_lines:
+            lyrics_sets_changed = True
+        if cleaned_lines:
+            cleaned_entry = dict(ls)
+            cleaned_entry["lines"] = cleaned_lines
+            cleaned_lyrics_sets.append(cleaned_entry)
+        elif orig_lines:
+            lyrics_sets_changed = True
+
+    if lyrics_sets_changed:
+        updated["lyricsSets"] = cleaned_lyrics_sets
+        changed = True
+
+    lyrics_sets = cleaned_lyrics_sets
     legacy_lyrics = str(updated.get("lyrics") or "").strip() if isinstance(updated.get("lyrics"), str) else ""
-    if not lyrics_sets and legacy_lyrics:
-        lines = [ln.strip() for ln in legacy_lyrics.splitlines() if ln.strip()]
-        if lines:
+    if legacy_lyrics:
+        cleaned_legacy_lines = yt_sync.strip_youtube_lyrics_footer(legacy_lyrics.splitlines())
+        cleaned_legacy_text = "\n".join(cleaned_legacy_lines)
+        if cleaned_legacy_text != legacy_lyrics:
+            updated["lyrics"] = cleaned_legacy_text
+            changed = True
+        if not lyrics_sets and cleaned_legacy_lines:
             lyrics_sets = [
                 {
                     "language": "Roman",
-                    "script": crawler.infer_script_kind(lines, "Roman"),
-                    "lines": lines,
+                    "script": crawler.infer_script_kind(cleaned_legacy_lines, "Roman"),
+                    "lines": cleaned_legacy_lines,
                 }
             ]
             updated["lyricsSets"] = lyrics_sets

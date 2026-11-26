@@ -65,7 +65,11 @@ LYRICS_MARKER_RE = re.compile(r"^\s*lyrics\s*[-–:]\s*(.*)$", re.I)
 FOOTER_STOP_RE = re.compile(
     r"(?:https?://|www\.|radio\s*sai|sri\s+sathya\s+sai\s+media\s+centre|follow\s+us|subscribe\s+(?:to|now)|"
     r"prasanthi\s+nilayam|timings\s*:|schedule\s*:|broadcast|watch\s+live|download\s+app|"
-    r"copyright|for\s+more\s+updates|website\s*:|whatsapp|telegram)",
+    r"copyright|for\s+more\s+(?:updates|bhajans|videos)|website\s*[-–:]|whatsapp|telegram|"
+    r"(?:regular\s+)?prasanthi\s+mandir\s+schedule|mandir\s+schedule|daily\s+schedule|"
+    r"veda\s+chanting\s*:\s*\d|bhajans\s*:\s*\d|\(\s*ist\s*\)\s*$|"
+    r"for\s+feedback\s+(?:or|and)\s+any\s+queries|our\s+digital\s+footprint|"
+    r"music\s+recorded,\s*arranged|listener@sssmediacentre\.org)",
     re.I,
 )
 
@@ -112,46 +116,40 @@ def _parse_timestamp_str(ts: str) -> int:
     return 0
 
 
+def strip_youtube_lyrics_footer(lines: Iterable[str]) -> list[str]:
+    """Strip trailing schedule/channel boilerplate, URLs, and hashtag footers from lyric lines."""
+    collected: list[str] = []
+    for raw_line in lines:
+        stripped = str(raw_line or "").strip()
+        if not stripped:
+            continue
+        if SEPARATOR_LINE_RE.match(stripped) or FOOTER_STOP_RE.search(stripped):
+            if collected:
+                break
+            continue
+        if PURE_HASHTAGS_RE.match(stripped):
+            if collected:
+                break
+            continue
+        # Strip inline hashtags while preserving lyric words
+        cleaned = re.sub(r"\s*#[^\s#]+", "", stripped).strip()
+        if cleaned:
+            collected.append(cleaned)
+    return collected
+
+
 def extract_mandir_lyrics(description: str | None) -> list[str]:
     """Extract clean lyric lines following a `Lyrics -` block, stripping footers and URLs."""
     if not description:
         return []
     raw_lines = description.splitlines()
-    started = False
-    collected: list[str] = []
-
-    for raw_line in raw_lines:
-        stripped = raw_line.strip()
-        if not started:
-            m = LYRICS_MARKER_RE.match(stripped)
-            if m:
-                started = True
-                inline = m.group(1).strip()
-                if inline and not FOOTER_STOP_RE.search(inline):
-                    collected.append(inline)
-            continue
-
-        if not stripped:
-            if collected:
-                continue
-            continue
-
-        if SEPARATOR_LINE_RE.match(stripped) or FOOTER_STOP_RE.search(stripped):
-            if collected:
-                break
-            continue
-
-        if PURE_HASHTAGS_RE.match(stripped):
-            if collected:
-                break
-            continue
-
-        # Strip inline hashtags while preserving lyric words
-        cleaned = re.sub(r"\s*#[^\s#]+", "", stripped).strip()
-        if cleaned:
-            collected.append(cleaned)
-
-    return collected if len(collected) >= 2 else []
+    for idx, raw_line in enumerate(raw_lines):
+        m = LYRICS_MARKER_RE.match(raw_line.strip())
+        if m:
+            candidate_lines = [m.group(1).strip(), *raw_lines[idx + 1 :]]
+            collected = strip_youtube_lyrics_footer(candidate_lines)
+            return collected if len(collected) >= 2 else []
+    return []
 
 
 def _extract_chapter_title_from_line(line: str, ts_match: re.Match[str]) -> str:
