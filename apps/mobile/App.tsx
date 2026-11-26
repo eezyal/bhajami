@@ -12,6 +12,7 @@ import {
   Text,
   TextInput,
   useColorScheme,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
@@ -126,6 +127,8 @@ const DARK_THEME: ThemePalette = {
 };
 
 export default function App() {
+  const { width: windowWidth } = useWindowDimensions();
+  const isTabletDock = windowWidth >= 680;
   const systemScheme = useColorScheme();
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(
     systemScheme === 'dark' ? 'dark' : 'light',
@@ -172,6 +175,9 @@ export default function App() {
   const [streamLoadingDetail, setStreamLoadingDetail] = useState(false);
   const [streamDetailFailed, setStreamDetailFailed] = useState(false);
   const [showStreamLyrics, setShowStreamLyrics] = useState(false);
+  const [showMiniLyrics, setShowMiniLyrics] = useState(false);
+  const [miniLyricsSetIdx, setMiniLyricsSetIdx] = useState(0);
+  const miniLyricsScrollRef = useRef<ScrollView>(null);
   const [streamYtPlaying, setStreamYtPlaying] = useState(false);
   const ytStreamRef = useRef<MobileYouTubePlayerHandle>(null);
 
@@ -617,6 +623,7 @@ export default function App() {
   const handleDismissStream = useCallback(() => {
     setStreamSessionActive(false);
     setStreamYtPlaying(false);
+    setShowMiniLyrics(false);
     void unloadAudio();
   }, [unloadAudio]);
 
@@ -751,6 +758,25 @@ export default function App() {
   const effectiveStreamPlaying =
     streamPlayback.kind === 'youtube' ? streamYtPlaying : isAudioPlaying;
   const activeStreamLiked = activeStreamEntry ? likedSet.has(activeStreamEntry.id) : false;
+  const streamLyricsSets = activeStreamBhajan?.lyricsSets ?? [];
+  const safeStreamLyricsIdx =
+    streamLyricsSets.length > 0 ? Math.min(miniLyricsSetIdx, streamLyricsSets.length - 1) : 0;
+  const activeStreamLyricsSet = streamLyricsSets[safeStreamLyricsIdx] ?? null;
+  const streamLyricsLines = activeStreamLyricsSet?.lines ?? [];
+  const hasStreamLyrics = streamLyricsLines.some((line) => line.trim().length > 0);
+  const miniStreamMetaLine = [
+    activeStreamEntry?.deity,
+    activeStreamEntry?.ragaName || activeStreamBhajan?.raga?.name,
+    activeStreamEntry?.beat || activeStreamBhajan?.beat || activeStreamBhajan?.tala,
+    activeStreamBhajan?.gentsPitch?.raw ? `G: ${activeStreamBhajan.gentsPitch.raw}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  useEffect(() => {
+    setMiniLyricsSetIdx(0);
+    miniLyricsScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [activeStreamEntry?.id]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: theme.bg }]}>
@@ -1898,91 +1924,219 @@ export default function App() {
             style={[
               streamIsMinimized
                 ? hasMinimizedStreamYt
-                  ? styles.miniDockCardWithVideo
+                  ? showMiniLyrics
+                    ? isTabletDock
+                      ? styles.miniDockCardWithVideo
+                      : styles.miniDockCardWithVideoLyrics
+                    : styles.miniDockCardWithVideo
                   : styles.miniDockCard
                 : styles.streamStageCard,
               { backgroundColor: theme.surface, borderColor: theme.border },
             ]}
           >
             {streamIsMinimized ? (
-              <View style={hasMinimizedStreamYt ? styles.miniDockVideoCol : styles.miniDockRow}>
-                <Pressable onPress={() => setActiveTab('stream')} style={hasMinimizedStreamYt ? undefined : { flex: 1 }}>
-                  <Text style={[styles.miniKicker, { color: theme.accent }]}>
-                    {`${effectiveStreamPlaying ? 'Playing' : 'Paused'} ${streamPlayback.kind === 'audio' ? 'Audio' : 'Video'} · ${safeStreamIdx + 1}/${streamQueue.length}`}
-                  </Text>
-                  <Text
-                    numberOfLines={hasMinimizedStreamYt ? 2 : 1}
-                    style={[styles.listTitle, { color: theme.text }]}
-                  >
-                    {activeStreamEntry.title}
-                  </Text>
-                </Pressable>
-
-                <View style={[styles.miniControlsRow, hasMinimizedStreamYt ? styles.miniControlsWrap : undefined]}>
-                  <Pressable
-                    onPress={() => advanceStream(-1)}
+              showMiniLyrics ? (
+                <View
+                  style={[
+                    styles.miniLyricsPanel,
+                    hasMinimizedStreamYt && isTabletDock ? { flex: 1, minWidth: 0 } : undefined,
+                    { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
+                  ]}
+                >
+                  <View
                     style={[
-                      styles.miniIconBtn,
-                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                      styles.miniLyricsHeader,
+                      { backgroundColor: theme.surface, borderBottomColor: theme.border },
                     ]}
-                    accessibilityLabel="Previous bhajan"
                   >
-                    <Text style={[styles.smallBtnText, { color: theme.text }]}>◀</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={handleToggleStreamPlayPause}
-                    style={[
-                      styles.miniIconBtn,
-                      { borderColor: theme.accent, backgroundColor: theme.accent },
-                    ]}
-                    accessibilityLabel={effectiveStreamPlaying ? 'Pause' : 'Play'}
-                  >
-                    <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                      {effectiveStreamPlaying ? '⏸' : '▶'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => advanceStream(1)}
-                    style={[
-                      styles.miniIconBtn,
-                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                    ]}
-                    accessibilityLabel="Next bhajan"
-                  >
-                    <Text style={[styles.smallBtnText, { color: theme.text }]}>▶▶</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handleToggleLike(activeStreamEntry.id)}
-                    style={[
-                      styles.miniIconBtn,
-                      {
-                        borderColor: activeStreamLiked ? theme.accent : theme.border,
-                        backgroundColor: theme.surfaceRaised,
-                      },
-                    ]}
-                    accessibilityLabel={activeStreamLiked ? 'Unlike bhajan' : 'Like bhajan'}
-                  >
-                    <Text
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text numberOfLines={1} style={[styles.miniKicker, { color: theme.accent }]}>
+                        {activeStreamLyricsSet?.language
+                          ? `Lyrics · ${activeStreamLyricsSet.language}`
+                          : 'Lyrics'}
+                      </Text>
+                      <Text numberOfLines={1} style={[styles.miniLyricsTitle, { color: theme.text }]}>
+                        {activeStreamEntry.title}
+                      </Text>
+                    </View>
+                    {streamLyricsSets.length > 1 && (
+                      <Pressable
+                        onPress={() =>
+                          setMiniLyricsSetIdx((idx) => (idx + 1) % streamLyricsSets.length)
+                        }
+                        style={[
+                          styles.miniLyricsActionBtn,
+                          { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                        ]}
+                        accessibilityLabel="Switch lyrics script"
+                      >
+                        <Text style={[styles.miniLyricsActionText, { color: theme.text }]}>
+                          {safeStreamLyricsIdx + 1}/{streamLyricsSets.length}
+                        </Text>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      onPress={() => setShowMiniLyrics(false)}
                       style={[
-                        styles.smallBtnText,
-                        { color: activeStreamLiked ? theme.accent : theme.text },
+                        styles.miniLyricsActionBtn,
+                        { borderColor: theme.accent, backgroundColor: theme.surface },
                       ]}
+                      accessibilityLabel="Hide lyrics"
                     >
-                      {activeStreamLiked ? '♥' : '♡'}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={handleDismissStream}
-                    style={[
-                      styles.miniIconBtn,
-                      { borderColor: theme.border, backgroundColor: theme.bg },
-                    ]}
-                    accessibilityLabel="Close minimized stream"
+                      <Text style={[styles.miniLyricsActionText, { color: theme.accent }]}>
+                        Hide Lyrics
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <ScrollView
+                    ref={miniLyricsScrollRef}
+                    nestedScrollEnabled
+                    style={
+                      hasMinimizedStreamYt
+                        ? isTabletDock
+                          ? styles.miniLyricsScrollTabletVideo
+                          : styles.miniLyricsScrollWithVideo
+                        : styles.miniLyricsScrollAudio
+                    }
+                    contentContainerStyle={styles.miniLyricsScrollContent}
                   >
-                    <Text style={[styles.smallBtnText, { color: theme.textMuted }]}>✕</Text>
-                  </Pressable>
+                    {hasStreamLyrics ? (
+                      streamLyricsLines.map((line, i) =>
+                        line.trim().length === 0 ? (
+                          <View key={`gap-${i}`} style={{ height: 6 }} />
+                        ) : (
+                          <Text key={`${i}-${line}`} style={[styles.miniLyricsLine, { color: theme.text }]}>
+                            {line}
+                          </Text>
+                        ),
+                      )
+                    ) : streamLoadingDetail && !activeStreamBhajan ? (
+                      <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                        Loading lyrics…
+                      </Text>
+                    ) : (
+                      <Text style={[styles.statusText, { color: theme.textMuted }]}>
+                        Lyrics are not yet available for this bhajan.
+                      </Text>
+                    )}
+                  </ScrollView>
                 </View>
-              </View>
+              ) : (
+                <View style={hasMinimizedStreamYt ? styles.miniDockVideoCol : styles.miniDockAudioCol}>
+                  <View style={styles.miniDockTopRow}>
+                    <Pressable onPress={() => setActiveTab('stream')} style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={[styles.miniKicker, { color: theme.accent }]}>
+                        {`${effectiveStreamPlaying ? 'Playing' : 'Paused'} ${streamPlayback.kind === 'audio' ? 'Audio' : 'Video'} · ${safeStreamIdx + 1}/${streamQueue.length}`}
+                      </Text>
+                      <Text
+                        numberOfLines={hasMinimizedStreamYt ? 2 : 1}
+                        style={[styles.listTitle, { color: theme.text }]}
+                      >
+                        {activeStreamEntry.title}
+                      </Text>
+                      {miniStreamMetaLine ? (
+                        <Text numberOfLines={1} style={[styles.miniMetaLine, { color: theme.textMuted }]}>
+                          {miniStreamMetaLine}
+                        </Text>
+                      ) : null}
+                    </Pressable>
+                    {!hasMinimizedStreamYt && (
+                      <Pressable
+                        onPress={() => setShowMiniLyrics(true)}
+                        style={[
+                          styles.miniShowLyricsBtn,
+                          { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                        ]}
+                        accessibilityLabel="Show lyrics"
+                      >
+                        <Text style={[styles.miniLyricsActionText, { color: theme.accent }]}>
+                          Show Lyrics
+                        </Text>
+                      </Pressable>
+                    )}
+                  </View>
+
+                  <View style={[styles.miniControlsRow, hasMinimizedStreamYt ? styles.miniControlsWrap : undefined]}>
+                    <Pressable
+                      onPress={() => advanceStream(-1)}
+                      style={[
+                        styles.miniIconBtn,
+                        { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                      ]}
+                      accessibilityLabel="Previous bhajan"
+                    >
+                      <Text style={[styles.smallBtnText, { color: theme.text }]}>◀</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleToggleStreamPlayPause}
+                      style={[
+                        styles.miniIconBtn,
+                        { borderColor: theme.accent, backgroundColor: theme.accent },
+                      ]}
+                      accessibilityLabel={effectiveStreamPlaying ? 'Pause' : 'Play'}
+                    >
+                      <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
+                        {effectiveStreamPlaying ? '⏸' : '▶'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => advanceStream(1)}
+                      style={[
+                        styles.miniIconBtn,
+                        { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                      ]}
+                      accessibilityLabel="Next bhajan"
+                    >
+                      <Text style={[styles.smallBtnText, { color: theme.text }]}>▶▶</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => handleToggleLike(activeStreamEntry.id)}
+                      style={[
+                        styles.miniIconBtn,
+                        {
+                          borderColor: activeStreamLiked ? theme.accent : theme.border,
+                          backgroundColor: theme.surfaceRaised,
+                        },
+                      ]}
+                      accessibilityLabel={activeStreamLiked ? 'Unlike bhajan' : 'Like bhajan'}
+                    >
+                      <Text
+                        style={[
+                          styles.smallBtnText,
+                          { color: activeStreamLiked ? theme.accent : theme.text },
+                        ]}
+                      >
+                        {activeStreamLiked ? '♥' : '♡'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleDismissStream}
+                      style={[
+                        styles.miniIconBtn,
+                        { borderColor: theme.border, backgroundColor: theme.bg },
+                      ]}
+                      accessibilityLabel="Close minimized stream"
+                    >
+                      <Text style={[styles.smallBtnText, { color: theme.textMuted }]}>✕</Text>
+                    </Pressable>
+                  </View>
+
+                  {hasMinimizedStreamYt && (
+                    <Pressable
+                      onPress={() => setShowMiniLyrics(true)}
+                      style={[
+                        styles.miniShowLyricsBtn,
+                        { borderColor: theme.border, backgroundColor: theme.surfaceRaised, alignSelf: 'flex-start' },
+                      ]}
+                      accessibilityLabel="Show lyrics"
+                    >
+                      <Text style={[styles.miniLyricsActionText, { color: theme.accent }]}>
+                        Show Lyrics
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              )
             ) : (
               <View style={styles.sectionStack}>
                 <View style={styles.chipWrap}>
@@ -2384,7 +2538,18 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 10,
   },
-  miniDockRow: {
+  miniDockCardWithVideoLyrics: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  miniDockAudioCol: {
+    gap: 8,
+  },
+  miniDockTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -2394,6 +2559,69 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 8,
+  },
+  miniShowLyricsBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    minHeight: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniLyricsPanel: {
+    width: '100%',
+    borderWidth: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  miniLyricsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+  },
+  miniLyricsTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  miniLyricsActionBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    minHeight: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  miniLyricsActionText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  miniLyricsScrollAudio: {
+    height: 220,
+  },
+  miniLyricsScrollWithVideo: {
+    height: 168,
+  },
+  miniLyricsScrollTabletVideo: {
+    height: 158,
+  },
+  miniLyricsScrollContent: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 3,
+  },
+  miniLyricsLine: {
+    fontSize: 13.5,
+    lineHeight: 20,
+  },
+  miniMetaLine: {
+    fontSize: 11,
+    marginTop: 1,
   },
   miniKicker: {
     fontSize: 10,

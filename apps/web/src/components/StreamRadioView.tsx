@@ -78,8 +78,11 @@ export function StreamRadioView({
 }: StreamRadioViewProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const ytRef = useRef<YouTubeSegmentPlayerHandle>(null);
+  const miniLyricsScrollRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [ytPlaying, setYtPlaying] = useState(false);
+  const [showMiniLyrics, setShowMiniLyrics] = useState(true);
+  const [miniLyricsSetIdx, setMiniLyricsSetIdx] = useState(0);
 
   const { recording: activeRec, hasAudioOption, hasVideoOption } = pickStreamRecording(
     currentBhajan,
@@ -95,6 +98,38 @@ export function StreamRadioView({
   const hasMinimizedYt = Boolean(minimized && !audioUrl && activeRec?.youtubeVideoId);
   const effectivePlaying = isDirectAudio && audioUrl ? isPlaying : ytPlaying;
   const isLiked = currentEntry ? likedSet.has(currentEntry.id) : false;
+
+  const lyricsSets = currentBhajan?.lyricsSets ?? [];
+  const safeLyricsSetIdx =
+    lyricsSets.length > 0 ? Math.min(miniLyricsSetIdx, lyricsSets.length - 1) : 0;
+  const activeLyricsSet = lyricsSets[safeLyricsSetIdx] ?? null;
+  const rawLyricLines = activeLyricsSet?.lines ?? [];
+  const nonEmptyLineCount = rawLyricLines.filter((line) => line.trim().length > 0).length;
+  const hasLyrics = nonEmptyLineCount > 0;
+  const useTwoColMiniLyrics = nonEmptyLineCount > 7;
+  const canToggleMiniLyrics = hasMinimizedYt || hasLyrics;
+  const showMiniLyricsPanel = Boolean(minimized && showMiniLyrics && canToggleMiniLyrics);
+
+  const miniRaga = currentEntry?.ragaName || currentBhajan?.raga?.name || '';
+  const miniBeat = currentEntry?.beat || currentBhajan?.beat || currentBhajan?.tala || '';
+  const miniMetaItems: Array<{ label: string; accent?: boolean }> = [];
+  if (currentEntry?.deity) miniMetaItems.push({ label: currentEntry.deity });
+  if (miniRaga) miniMetaItems.push({ label: `Raga: ${miniRaga}`, accent: true });
+  if (miniBeat) miniMetaItems.push({ label: `Beat: ${miniBeat}` });
+  if (currentBhajan?.tempo) miniMetaItems.push({ label: currentBhajan.tempo });
+  if (currentBhajan?.gentsPitch?.raw) miniMetaItems.push({ label: `Gents: ${currentBhajan.gentsPitch.raw}` });
+  if (currentBhajan?.ladiesPitch?.raw) miniMetaItems.push({ label: `Ladies: ${currentBhajan.ladiesPitch.raw}` });
+  if (currentBhajan?.language) miniMetaItems.push({ label: currentBhajan.language });
+
+  useEffect(() => {
+    setMiniLyricsSetIdx(0);
+  }, [currentEntry?.id]);
+
+  useEffect(() => {
+    if (miniLyricsScrollRef.current) {
+      miniLyricsScrollRef.current.scrollTop = 0;
+    }
+  }, [currentEntry?.id, safeLyricsSetIdx]);
 
   useEffect(() => {
     setIsPlaying(Boolean(isDirectAudio && audioUrl && autoPlay));
@@ -241,16 +276,20 @@ export function StreamRadioView({
         <div
           className={
             minimized
-              ? hasMinimizedYt
-                ? 'mini-stream-dock mini-stream-dock-with-video'
-                : 'mini-stream-dock'
+              ? [
+                  'mini-stream-dock',
+                  hasMinimizedYt ? 'mini-stream-dock-with-video' : 'mini-stream-dock-audio',
+                  showMiniLyricsPanel ? 'mini-stream-dock-with-lyrics' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')
               : 'stream-stage-card'
           }
           role={minimized ? 'region' : undefined}
           aria-label={minimized ? `Minimized Bhajan Player: ${currentEntry.title}` : undefined}
         >
           {minimized ? (
-            <div className={hasMinimizedYt ? 'mini-stream-bar-col' : 'mini-stream-bar-row'}>
+            <div className={hasMinimizedYt || showMiniLyricsPanel ? 'mini-stream-bar-col' : 'mini-stream-bar-row'}>
               <button
                 type="button"
                 className="mini-stream-title-btn"
@@ -266,6 +305,19 @@ export function StreamRadioView({
                 </span>
                 <span className="mini-stream-title">{currentEntry.title}</span>
               </button>
+
+              {!showMiniLyricsPanel && miniMetaItems.length > 0 && (
+                <div className="mini-stream-meta-chips" aria-label="Bhajan metadata">
+                  {miniMetaItems.map((item) => (
+                    <span
+                      key={item.label}
+                      className={item.accent ? 'mini-meta-chip mini-meta-chip-accent' : 'mini-meta-chip'}
+                    >
+                      {item.label}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               <div className="mini-stream-controls">
                 <button
@@ -311,6 +363,29 @@ export function StreamRadioView({
                     onClick={onDismiss}
                   >
                     ✕
+                  </button>
+                )}
+                {canToggleMiniLyrics && !showMiniLyrics && (
+                  <button
+                    type="button"
+                    className="btn btn-sm mini-icon-btn mini-lyrics-expand-btn"
+                    aria-label="Show lyrics"
+                    title="Show lyrics"
+                    onClick={() => setShowMiniLyrics(true)}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="4 10 8 6 12 10" />
+                    </svg>
                   </button>
                 )}
               </div>
@@ -384,8 +459,9 @@ export function StreamRadioView({
             </div>
           )}
 
-          {/* Both <audio> and <YouTubeSegmentPlayer> stay mounted across full <-> minimized for zero-interruption playback (YT dock stays >= 200x200px TOS floor) */}
+          {/* Both <audio> and <YouTubeSegmentPlayer> stay mounted at child index 2 across full <-> minimized and lyrics toggles for zero-interruption playback (YT dock stays >= 200x200px TOS floor) */}
           <div
+            key="stream-media-slot"
             className={
               minimized
                 ? hasMinimizedYt
@@ -467,7 +543,106 @@ export function StreamRadioView({
             )}
           </div>
 
-          {!minimized && currentBhajan?.lyricsSets?.[0]?.lines?.length ? (
+          {minimized ? (
+            showMiniLyricsPanel ? (
+              <section
+                className="mini-stream-lyrics-panel"
+                aria-label={
+                  activeLyricsSet?.language
+                    ? `Bhajan lyrics (${activeLyricsSet.language})`
+                    : 'Bhajan lyrics'
+                }
+              >
+                <div
+                  ref={miniLyricsScrollRef}
+                  className="mini-stream-lyrics-scroll"
+                  tabIndex={0}
+                >
+                  {hasLyrics ? (
+                    <div
+                      className={
+                        useTwoColMiniLyrics
+                          ? 'mini-stream-lyrics-lines mini-stream-lyrics-two-col'
+                          : 'mini-stream-lyrics-lines mini-stream-lyrics-single-col'
+                      }
+                    >
+                      {rawLyricLines.map((line, i) =>
+                        line.trim().length === 0 ? (
+                          <div key={`gap-${i}`} className="mini-stream-lyric-gap" aria-hidden="true" />
+                        ) : (
+                          <div key={`${i}-${line}`} className="mini-stream-lyric-line">
+                            {line}
+                          </div>
+                        ),
+                      )}
+                    </div>
+                  ) : loadingDetail && !currentBhajan ? (
+                    <p className="mini-stream-lyrics-empty">Loading lyrics…</p>
+                  ) : (
+                    <div>
+                      {miniMetaItems.length > 0 && (
+                        <div className="mini-stream-meta-chips" aria-label="Bhajan metadata">
+                          {miniMetaItems.map((item) => (
+                            <span
+                              key={item.label}
+                              className={item.accent ? 'mini-meta-chip mini-meta-chip-accent' : 'mini-meta-chip'}
+                            >
+                              {item.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mini-stream-lyrics-empty">
+                        <span>Lyrics not added yet.</span>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => onOpenInStudio(currentEntry.id)}
+                        >
+                          Open in Studio
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="mini-lyrics-corner-actions">
+                  {lyricsSets.length > 1 && (
+                    <button
+                      type="button"
+                      className="mini-lyrics-script-btn"
+                      title="Switch lyrics script"
+                      onClick={() =>
+                        setMiniLyricsSetIdx((idx) => (idx + 1) % lyricsSets.length)
+                      }
+                    >
+                      {safeLyricsSetIdx + 1}/{lyricsSets.length}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="mini-lyrics-collapse-btn"
+                    aria-label="Hide lyrics"
+                    title="Hide lyrics"
+                    onClick={() => setShowMiniLyrics(false)}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="4 6 8 10 12 6" />
+                    </svg>
+                  </button>
+                </div>
+              </section>
+            ) : null
+          ) : currentBhajan?.lyricsSets?.[0]?.lines?.length ? (
             <details>
               <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
                 Show Lyrics ({currentBhajan.lyricsSets[0].language})

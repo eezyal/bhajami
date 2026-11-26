@@ -379,6 +379,15 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
     const css = fs.readFileSync(path.resolve(process.cwd(), 'apps/web/src/app/globals.css'), 'utf-8');
     assert.match(css, /\.yt-player-frame\s*\{[^}]*min-width:\s*320px/s);
     assert.match(css, /\.yt-player-frame\s*\{[^}]*min-height:\s*180px/s);
+    assert.match(css, /\.yt-player-frame-mini\s*\{[^}]*min-width:\s*200px/s);
+    assert.match(css, /\.yt-player-frame-mini\s*\{[^}]*min-height:\s*200px/s);
+    assert.match(css, /\.mini-stream-host\s*\{[^}]*container-name:\s*mini-dock/s);
+    assert.match(css, /\.mini-stream-meta-chips/);
+    assert.match(css, /@container mini-dock \(min-width:\s*540px\)/);
+    assert.match(css, /@container mini-dock \(min-width:\s*660px\)/);
+    assert.match(css, /@container mini-lyrics \(min-width:\s*390px\)/);
+    assert.match(css, /column-count:\s*2/);
+    assert.match(css, /scrollbar-color:/);
 
     const playerSrc = fs.readFileSync(
       path.resolve(process.cwd(), 'apps/web/src/components/YouTubeSegmentPlayer.tsx'),
@@ -386,5 +395,23 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
     );
     assert.match(playerSrc, /Watch on YouTube/);
     assert.match(playerSrc, /embeddable === false/);
+
+    const streamSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'apps/web/src/components/StreamRadioView.tsx'),
+      'utf-8',
+    );
+    assert.match(streamSrc, /useState\(true\)/);
+    assert.match(streamSrc, /nonEmptyLineCount > 7/);
+    assert.match(streamSrc, /Hide lyrics/);
+    assert.match(streamSrc, /Show lyrics/);
+    assert.match(streamSrc, /mini-stream-meta-chips/);
+
+    const mobileAppSrc = fs.readFileSync(
+      path.resolve(process.cwd(), 'apps/mobile/App.tsx'),
+      'utf-8',
+    );
+    assert.match(mobileAppSrc, /\[showMiniLyrics, setShowMiniLyrics\] = useState\(false\)/);
+    assert.match(mobileAppSrc, /Show Lyrics/);
+    assert.match(mobileAppSrc, /Hide Lyrics/);
   });
 });
