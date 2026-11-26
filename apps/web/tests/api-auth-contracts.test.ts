@@ -10,6 +10,7 @@ import {
   verifyAdminBearerToken,
   verifyUserBearerToken,
 } from '../src/lib/firebase-admin';
+import { formatFirebaseAuthError } from '../src/lib/firebase-client';
 import {
   ALLOWED_META_KEYS,
   buildCanonicalBhajanFields,
@@ -120,6 +121,58 @@ describe('Phase 1 cloud config & server auth verification', () => {
       isAdminIdentity({ email: 'other@gmail.com', emailVerified: true, adminClaim: true }),
       true,
     );
+  });
+
+  it('formats Google Sign-In errors with unauthorized-domain console links and popup redirect fallbacks', () => {
+    const loopbackErr = formatFirebaseAuthError(
+      { code: 'auth/unauthorized-domain', message: 'Firebase: Error (auth/unauthorized-domain).' },
+      { hostname: '127.0.0.1', isCloud: true },
+    );
+    assert.equal(loopbackErr.code, 'auth/unauthorized-domain');
+    assert.equal(loopbackErr.suggestLocalhost, true);
+    assert.equal(loopbackErr.suggestRedirect, false);
+    assert.match(loopbackErr.message, /localhost:3000/);
+    assert.equal(
+      loopbackErr.consoleSettingsUrl,
+      'https://console.firebase.google.com/project/saibhajanverse/authentication/settings',
+    );
+
+    const lanHostErr = formatFirebaseAuthError(
+      new Error('Firebase: Error (auth/unauthorized-domain).'),
+      { hostname: 'srinivasas-macbook-pro.local', isCloud: true },
+    );
+    assert.equal(lanHostErr.suggestLocalhost, false);
+    assert.equal(
+      lanHostErr.consoleSettingsUrl,
+      'https://console.firebase.google.com/project/saibhajanverse/authentication/settings',
+    );
+    assert.match(lanHostErr.message, /srinivasas-macbook-pro\.local/);
+
+    const lanIpErr = formatFirebaseAuthError(
+      { code: 'auth/unauthorized-domain', message: 'Firebase: Error (auth/unauthorized-domain).' },
+      { hostname: '192.168.86.21', isCloud: true },
+    );
+    assert.equal(lanIpErr.suggestLocalhost, false);
+
+    const popupErr = formatFirebaseAuthError(
+      { code: 'auth/popup-blocked', message: 'Popup blocked' },
+      { isCloud: true },
+    );
+    assert.equal(popupErr.suggestRedirect, true);
+    assert.match(popupErr.message, /auth\/popup-blocked/);
+
+    const closedErr = formatFirebaseAuthError(
+      { code: 'auth/popup-closed-by-user', message: 'Closed' },
+      { isCloud: true },
+    );
+    assert.equal(closedErr.suggestRedirect, true);
+
+    const disabledErr = formatFirebaseAuthError(
+      { code: 'auth/operation-not-allowed', message: 'Not allowed' },
+      { isCloud: true },
+    );
+    assert.equal(disabledErr.code, 'auth/operation-not-allowed');
+    assert.match(disabledErr.message, /Sign-in method/);
   });
 
   it('returns 401 for unauthenticated protected routes when hasCloudConfig() is true', async () => {

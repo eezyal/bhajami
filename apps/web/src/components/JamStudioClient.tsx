@@ -20,6 +20,7 @@ import {
   type StreamModeKind,
 } from '@bhajami/shared';
 import {
+  consumeGoogleRedirectResult,
   getCurrentFirebaseIdToken,
   getFirebaseClientAuth,
   getFirebaseClientFirestore,
@@ -136,11 +137,12 @@ export function JamStudioClient({
     }
   }, []);
 
-  // Persist Firebase client authentication across reloads
+  // Persist Firebase client authentication across reloads & complete Google redirect sign-in
   useEffect(() => {
     const fb = getFirebaseClientAuth();
     if (!fb) return;
     let cancelled = false;
+    void consumeGoogleRedirectResult();
     const unsub = onAuthStateChanged(fb.auth, (fbUser) => {
       if (fbUser && !fbUser.isAnonymous) {
         void (async () => {

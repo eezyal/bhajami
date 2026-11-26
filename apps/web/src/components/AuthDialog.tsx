@@ -4,10 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
 } from 'firebase/auth';
-import { getFirebaseClientAuth, isFirebaseClientConfigured } from '@/lib/firebase-client';
+import {
+  formatFirebaseAuthError,
+  getFirebaseClientAuth,
+  isFirebaseClientConfigured,
+  signInWithGoogleRedirect,
+  signInWithGoogleSmart,
+  type FormattedAuthError,
+} from '@/lib/firebase-client';
 
 export const PRIMARY_ADMIN_EMAIL = (
   process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'pschax@gmail.com'
@@ -45,19 +51,6 @@ interface AuthDialogProps {
   onSignOut: () => void;
 }
 
-function formatAuthError(err: unknown, fallback: string, isCloud: boolean): string {
-  const msg = err instanceof Error ? err.message : fallback;
-  if (
-    msg.includes('auth/configuration-not-found') ||
-    msg.includes('auth/operation-not-allowed')
-  ) {
-    return isCloud
-      ? 'Enable this Sign-In provider in Firebase Console → Authentication → Sign-in method (saibhajanverse).'
-      : 'Enable this Sign-In provider in Firebase Console → Authentication → Sign-in method (saibhajanverse), or use Continue as Guest below.';
-  }
-  return msg;
-}
-
 export function AuthDialog({
   open,
   onClose,
@@ -73,7 +66,8 @@ export function AuthDialog({
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [authAlert, setAuthAlert] = useState<FormattedAuthError | null>(null);
+  const [emailStatusMessage, setEmailStatusMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -129,11 +123,27 @@ export function AuthDialog({
 
   const handleGoogleSignIn = async () => {
     setBusy(true);
-    setStatusMessage(null);
+    setAuthAlert(null);
+    setEmailStatusMessage(null);
     const fb = getFirebaseClientAuth();
     if (fb) {
       try {
-        const result = await signInWithPopup(fb.auth, fb.googleProvider);
+        const smartRes = await signInWithGoogleSmart();
+        if (!smartRes.ok) {
+          setBusy(false);
+          return;
+        }
+        if (smartRes.redirected) {
+          setAuthAlert({
+            code: null,
+            suggestLocalhost: false,
+            suggestRedirect: false,
+            message: 'Redirecting to Google Sign-In…',
+          });
+          setBusy(false);
+          return;
+        }
+        const { result } = smartRes;
         const tokenResult = await result.user.getIdTokenResult().catch(() => null);
         const signedEmail = result.user.email || '';
         const isAdmin = Boolean(
@@ -152,16 +162,26 @@ export function AuthDialog({
         dialogRef.current?.close();
         return;
       } catch (err) {
-        setStatusMessage(formatAuthError(err, 'Google Sign-In failed', isCloud));
+        setAuthAlert(
+          formatFirebaseAuthError(err, {
+            fallback: 'Google Sign-In failed',
+            isCloud,
+            hostname: typeof window !== 'undefined' ? window.location.hostname : undefined,
+          }),
+        );
         setBusy(false);
         return;
       }
     }
 
     if (isCloud) {
-      setStatusMessage(
-        'Firebase Web configuration is missing. Set NEXT_PUBLIC_FIREBASE_* keys before signing in.',
-      );
+      setAuthAlert({
+        code: null,
+        suggestLocalhost: false,
+        suggestRedirect: false,
+        message:
+          'Firebase Web configuration is missing. Set NEXT_PUBLIC_FIREBASE_* keys before signing in.',
+      });
       setBusy(false);
       return;
     }
@@ -178,13 +198,31 @@ export function AuthDialog({
     dialogRef.current?.close();
   };
 
+  const handleGoogleRedirect = async () => {
+    setBusy(true);
+    setAuthAlert(null);
+    try {
+      await signInWithGoogleRedirect();
+    } catch (err) {
+      setAuthAlert(
+        formatFirebaseAuthError(err, {
+          fallback: 'Google Redirect Sign-In failed',
+          isCloud,
+          hostname: typeof window !== 'undefined' ? window.location.hostname : undefined,
+        }),
+      );
+      setBusy(false);
+    }
+  };
+
   const handleEmailSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
     if (!form.reportValidity()) return;
 
     setBusy(true);
-    setStatusMessage(null);
+    setAuthAlert(null);
+    setEmailStatusMessage(null);
     const fb = getFirebaseClientAuth();
 
     if (fb) {
@@ -211,14 +249,20 @@ export function AuthDialog({
         dialogRef.current?.close();
         return;
       } catch (err) {
-        setStatusMessage(formatAuthError(err, 'Authentication failed', isCloud));
+        setEmailStatusMessage(
+          formatFirebaseAuthError(err, {
+            fallback: 'Authentication failed',
+            isCloud,
+            hostname: typeof window !== 'undefined' ? window.location.hostname : undefined,
+          }).message,
+        );
         setBusy(false);
         return;
       }
     }
 
     if (isCloud) {
-      setStatusMessage(
+      setEmailStatusMessage(
         'Firebase Web configuration is missing. Set NEXT_PUBLIC_FIREBASE_* keys before signing in.',
       );
       setBusy(false);
@@ -307,9 +351,13 @@ export function AuthDialog({
             type="button"
             className="btn"
             onClick={() =>
-              setStatusMessage(
-                'Facebook & Instagram OIDC require a Meta Developer App ID configured in Firebase Authentication -> Sign-in method.',
-              )
+              setAuthAlert({
+                code: null,
+                suggestLocalhost: false,
+                suggestRedirect: false,
+                message:
+                  'Facebook & Instagram OIDC require a Meta Developer App ID configured in Firebase Authentication -> Sign-in method.',
+              })
             }
           >
             Facebook / Instagram (Meta OIDC)
@@ -327,6 +375,53 @@ export function AuthDialog({
             </button>
           )}
         </div>
+
+        {authAlert && (
+          <div
+            role="alert"
+            className="control-box"
+            style={{
+              marginBottom: '1rem',
+              borderColor: 'var(--danger)',
+              background: 'var(--danger-bg)',
+              color: 'var(--danger)',
+            }}
+          >
+            <p style={{ margin: 0, fontSize: '0.86rem', fontWeight: 600 }}>{authAlert.message}</p>
+            {(authAlert.suggestLocalhost || authAlert.suggestRedirect || authAlert.consoleSettingsUrl) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.6rem' }}>
+                {authAlert.suggestLocalhost && typeof window !== 'undefined' && (
+                  <a
+                    className="btn btn-sm btn-primary"
+                    href={`http://localhost:${window.location.port || '3000'}${window.location.pathname}${window.location.search}`}
+                  >
+                    Open on localhost
+                  </a>
+                )}
+                {authAlert.consoleSettingsUrl && (
+                  <a
+                    className="btn btn-sm btn-primary"
+                    href={authAlert.consoleSettingsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Add Domain in Firebase Console
+                  </a>
+                )}
+                {authAlert.suggestRedirect && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={busy}
+                    onClick={handleGoogleRedirect}
+                  >
+                    Use Redirect Sign-In
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '1rem 0' }} />
 
@@ -439,9 +534,9 @@ export function AuthDialog({
             </div>
           </div>
 
-          {statusMessage && (
+          {emailStatusMessage && (
             <p style={{ color: 'var(--accent)', fontSize: '0.88rem', marginBottom: '0.8rem' }}>
-              {statusMessage}
+              {emailStatusMessage}
             </p>
           )}
 

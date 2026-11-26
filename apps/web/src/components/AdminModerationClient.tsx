@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import {
   computeLyricsDiff,
   type Bhajan,
@@ -14,7 +14,15 @@ import {
   type ProposedMetadataPatch,
   type SubmissionType,
 } from '@bhajami/shared';
-import { getCurrentFirebaseIdToken, getFirebaseClientAuth } from '@/lib/firebase-client';
+import {
+  consumeGoogleRedirectResult,
+  formatFirebaseAuthError,
+  getCurrentFirebaseIdToken,
+  getFirebaseClientAuth,
+  signInWithGoogleRedirect,
+  signInWithGoogleSmart,
+  type FormattedAuthError,
+} from '@/lib/firebase-client';
 import { ThemeToggle } from './ThemeToggle';
 import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
 
@@ -84,6 +92,7 @@ export function AdminModerationClient({
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<FormattedAuthError | null>(null);
   const [adminEmail, setAdminEmail] = useState<string | null>(null);
   const reviewNoteRef = useRef<HTMLTextAreaElement>(null);
 
@@ -251,6 +260,17 @@ export function AdminModerationClient({
       if (cloudMode) setIsAuthorizedAdmin(false);
       return;
     }
+    void consumeGoogleRedirectResult().then(({ error }) => {
+      if (error) {
+        setAuthError(
+          formatFirebaseAuthError(error, {
+            fallback: 'Google Sign-In failed',
+            isCloud: cloudMode,
+            hostname: typeof window !== 'undefined' ? window.location.hostname : undefined,
+          }),
+        );
+      }
+    });
     return onAuthStateChanged(fb.auth, async (u) => {
       const tokenResult = u ? await u.getIdTokenResult().catch(() => null) : null;
       const normalizedEmail = (u?.email || '').trim().toLowerCase();
@@ -449,6 +469,30 @@ export function AdminModerationClient({
   const canModerateSelected =
     selected?.status === 'pending' || selected?.status === 'info_requested';
 
+  const handleAdminGoogleSignIn = async () => {
+    setAuthError(null);
+    try {
+      const smartRes = await signInWithGoogleSmart();
+      if (!smartRes.ok) {
+        setAuthError({
+          code: null,
+          suggestLocalhost: false,
+          suggestRedirect: false,
+          message:
+            'Firebase Web configuration is missing. Set NEXT_PUBLIC_FIREBASE_* keys before signing in.',
+        });
+      }
+    } catch (err) {
+      const formatted = formatFirebaseAuthError(err, {
+        fallback: 'Google Sign-In failed',
+        isCloud: cloudMode,
+        hostname: typeof window !== 'undefined' ? window.location.hostname : undefined,
+      });
+      setAuthError(formatted);
+      setBanner(formatted.message);
+    }
+  };
+
   return (
     <>
       <header className="top-header">
@@ -481,15 +525,7 @@ export function AdminModerationClient({
               <button
                 type="button"
                 className="btn"
-                onClick={async () => {
-                  const fb = getFirebaseClientAuth();
-                  if (!fb) return;
-                  try {
-                    await signInWithPopup(fb.auth, fb.googleProvider);
-                  } catch (err) {
-                    setBanner(err instanceof Error ? err.message : 'Google Sign-In failed');
-                  }
-                }}
+                onClick={handleAdminGoogleSignIn}
               >
                 Sign in with Google (Cloud Sync)
               </button>
@@ -520,15 +556,7 @@ export function AdminModerationClient({
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={async () => {
-                      const fb = getFirebaseClientAuth();
-                      if (!fb) return;
-                      try {
-                        await signInWithPopup(fb.auth, fb.googleProvider);
-                      } catch (err) {
-                        setBanner(err instanceof Error ? err.message : 'Google Sign-In failed');
-                      }
-                    }}
+                    onClick={handleAdminGoogleSignIn}
                   >
                     Sign in with Google
                   </button>
@@ -536,6 +564,52 @@ export function AdminModerationClient({
                     Back to bhaJami
                   </Link>
                 </div>
+                {authError && (
+                  <div
+                    role="alert"
+                    className="control-box"
+                    style={{
+                      borderColor: 'var(--danger)',
+                      background: 'var(--danger-bg)',
+                      color: 'var(--danger)',
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: '0.86rem', fontWeight: 600 }}>
+                      {authError.message}
+                    </p>
+                    {(authError.suggestLocalhost || authError.suggestRedirect || authError.consoleSettingsUrl) && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.55rem' }}>
+                        {authError.suggestLocalhost && typeof window !== 'undefined' && (
+                          <a
+                            className="btn btn-sm btn-primary"
+                            href={`http://localhost:${window.location.port || '3000'}${window.location.pathname}${window.location.search}`}
+                          >
+                            Open on localhost
+                          </a>
+                        )}
+                        {authError.consoleSettingsUrl && (
+                          <a
+                            className="btn btn-sm btn-primary"
+                            href={authError.consoleSettingsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Add Domain in Firebase Console
+                          </a>
+                        )}
+                        {authError.suggestRedirect && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => void signInWithGoogleRedirect()}
+                          >
+                            Use Redirect Sign-In
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ display: 'grid', gap: '0.75rem' }}>
