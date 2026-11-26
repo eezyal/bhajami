@@ -36,7 +36,6 @@ interface StreamRadioViewProps {
   onNext: () => void;
   onReshuffle: () => void;
   onSelectQueueIndex: (idx: number) => void;
-  onOpenInStudio: (bhajanId: string) => void;
   onPlayEntry: (entry: BhajanIndexEntry) => void;
   onRetryDetail?: () => void;
   onExpand?: () => void;
@@ -69,7 +68,6 @@ export function StreamRadioView({
   onNext,
   onReshuffle,
   onSelectQueueIndex,
-  onOpenInStudio,
   onPlayEntry,
   onRetryDetail,
   onExpand,
@@ -448,13 +446,6 @@ export function StreamRadioView({
                 >
                   Next ▶
                 </button>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => onOpenInStudio(currentEntry.id)}
-                >
-                  Open in Studio
-                </button>
               </div>
             </div>
           )}
@@ -538,7 +529,7 @@ export function StreamRadioView({
               </div>
             ) : (
               <p className="field-hint" style={{ margin: 0 }}>
-                No playable audio source is linked to this bhajan yet — click Next or Open in Studio.
+                No playable audio source is linked to this bhajan yet — click Next.
               </p>
             )}
           </div>
@@ -594,13 +585,6 @@ export function StreamRadioView({
                       )}
                       <div className="mini-stream-lyrics-empty">
                         <span>Lyrics not added yet.</span>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => onOpenInStudio(currentEntry.id)}
-                        >
-                          Open in Studio
-                        </button>
                       </div>
                     </div>
                   )}
@@ -750,13 +734,6 @@ export function StreamRadioView({
                       onClick={() => onToggleLike(rec.entry.id)}
                     >
                       {liked ? '♥ Like' : '♡ Like'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      onClick={() => onOpenInStudio(rec.entry.id)}
-                    >
-                      Studio
                     </button>
                   </div>
                 </article>

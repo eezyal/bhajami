@@ -1,4 +1,5 @@
 import {
+  getCatalogIndex,
   listCorrections,
   listOutboxEmails,
   listRevisions,
@@ -15,9 +16,12 @@ export default async function AdminCorrectionsPage({
 }) {
   const params = await searchParams;
   const cloud = hasCloudConfig();
-  const corrections = cloud ? [] : listCorrections();
-  const outbox = cloud ? [] : listOutboxEmails();
-  const revisions = cloud ? [] : listRevisions();
+  const [corrections, outbox, revisions, catalogIndex] = await Promise.all([
+    Promise.resolve(cloud ? [] : listCorrections()),
+    Promise.resolve(cloud ? [] : listOutboxEmails()),
+    Promise.resolve(cloud ? [] : listRevisions()),
+    getCatalogIndex(),
+  ]);
 
   return (
     <AdminModerationClient
@@ -26,6 +30,8 @@ export default async function AdminCorrectionsPage({
       initialRevisions={revisions}
       initialSelectedId={params.selected}
       cloudMode={cloud}
+      catalogVersion={catalogIndex.version}
+      catalogStats={catalogIndex.stats}
     />
   );
 }

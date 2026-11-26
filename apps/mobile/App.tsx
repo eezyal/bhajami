@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  FlatList,
-  Modal,
   NativeModules,
   Platform,
   Pressable,
@@ -24,7 +22,6 @@ import {
   normalizeRagaKey,
   pickStreamRecording,
   resolveLikedSet,
-  transposePitch,
   type Bhajan,
   type BhajanIndexEntry,
   type BhajanRecommendation,
@@ -54,12 +51,11 @@ import {
 } from './src/lib/mobile-storage';
 import {
   filterBhajanIndexEntries,
-  formatMetadataSourceBadge,
   resolveDefaultApiBase,
   resolvePlaybackAction,
 } from './src/lib/search-and-playback';
 
-type AppTab = 'home' | 'stream' | 'studio' | 'liked';
+type AppTab = 'home' | 'stream' | 'liked';
 
 const DEFAULT_API_BASE = resolveDefaultApiBase({
   envBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
@@ -136,30 +132,17 @@ export default function App() {
   const theme = themeMode === 'dark' ? DARK_THEME : LIGHT_THEME;
 
   const [activeTab, setActiveTab] = useState<AppTab>('home');
-  const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE);
+  const apiBaseUrl = DEFAULT_API_BASE;
 
   // Two-tier cloud index + lazy detail cache
   const [catalogIndex, setCatalogIndex] = useState<CatalogIndexPayload>(() =>
     getBundledCatalogIndex(),
   );
-  const [catalogSource, setCatalogSource] = useState<'cloud' | 'bundled'>('bundled');
   const [syncingIndex, setSyncingIndex] = useState(false);
   const [bhajanCache, setBhajanCache] = useState<Record<string, Bhajan>>({});
 
-  // Home + Studio state
+  // Home state
   const [homeQuery, setHomeQuery] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDeity, setSelectedDeity] = useState<string>('All');
-  const [onlyVerified, setOnlyVerified] = useState(false);
-  const [selectedId, setSelectedId] = useState<string>(
-    () => getBundledCatalogIndex().entries[0]?.id ?? '',
-  );
-  const [studioLoadingDetail, setStudioLoadingDetail] = useState(false);
-  const [studioDetailFailed, setStudioDetailFailed] = useState(false);
-  const [activeScriptIdx, setActiveScriptIdx] = useState(0);
-  const [pitchReference, setPitchReference] = useState<'gents' | 'ladies'>('gents');
-  const [semitoneDelta, setSemitoneDelta] = useState(0);
-  const [activeRecIndex, setActiveRecIndex] = useState(0);
 
   // Stream, Favorites, & Sticky Audio/Video state
   const [likedIds, setLikedIds] = useState<string[]>([]);
@@ -184,19 +167,8 @@ export default function App() {
   // Direct MP3 playback via expo-av (shared cleanly with track URI tracking)
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
-  const [audioMessage, setAudioMessage] = useState<string | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
   const loadedAudioUriRef = useRef<string | null>(null);
-
-  // Correction modal state
-  const [correctionOpen, setCorrectionOpen] = useState(false);
-  const [proposedLyricsText, setProposedLyricsText] = useState('');
-  const [reasonOrSource, setReasonOrSource] = useState('');
-  const [submitterName, setSubmitterName] = useState('');
-  const [submitterEmail, setSubmitterEmail] = useState('');
-  const [authToken, setAuthToken] = useState('');
-  const [submittingCorrection, setSubmittingCorrection] = useState(false);
-  const [correctionFeedback, setCorrectionFeedback] = useState<string | null>(null);
 
   const unloadAudio = useCallback(async () => {
     if (soundRef.current) {
@@ -205,7 +177,6 @@ export default function App() {
     }
     loadedAudioUriRef.current = null;
     setIsAudioPlaying(false);
-    setAudioMessage(null);
   }, []);
 
   useEffect(() => {
@@ -228,7 +199,6 @@ export default function App() {
       const result = await fetchCloudCatalogIndex({ projectId: DEFAULT_FIREBASE_PROJECT_ID });
       if (result.source === 'cloud' && result.payload.entries.length > 0) {
         setCatalogIndex(result.payload);
-        setCatalogSource('cloud');
         setBhajanCache({});
         await saveCachedCatalogIndex(result.payload);
       }
@@ -253,7 +223,6 @@ export default function App() {
       if (storedMediaMode) setStreamMediaMode(storedMediaMode);
       if (cachedIndex && cachedIndex.version > 0 && cachedIndex.entries.length > 0) {
         setCatalogIndex(cachedIndex);
-        setCatalogSource('cloud');
       }
       await refreshCloudCatalog();
     })();
@@ -338,28 +307,6 @@ export default function App() {
     return filterBhajanIndexEntries(catalogIndex.entries, { query: homeQuery }).slice(0, 8);
   }, [catalogIndex.entries, homeQuery]);
 
-  const filteredStudioEntries = useMemo(
-    () =>
-      filterBhajanIndexEntries(catalogIndex.entries, {
-        query: searchQuery,
-        deity: selectedDeity,
-        onlyVerified,
-      }),
-    [catalogIndex.entries, onlyVerified, searchQuery, selectedDeity],
-  );
-
-  const activeStudioEntry = useMemo(
-    () =>
-      catalogIndex.entries.find((e) => e.id === selectedId) ??
-      filteredStudioEntries[0] ??
-      catalogIndex.entries[0] ??
-      null,
-    [catalogIndex.entries, filteredStudioEntries, selectedId],
-  );
-  const activeStudioBhajan: Bhajan | null = activeStudioEntry
-    ? bhajanCache[activeStudioEntry.id] ?? null
-    : null;
-
   const likedIdsRef = useRef(likedIds);
   likedIdsRef.current = likedIds;
 
@@ -411,17 +358,6 @@ export default function App() {
     [],
   );
 
-  // Lazy-fetch Studio detail
-  useEffect(() => {
-    const id = activeStudioEntry?.id;
-    if (!id || bhajanCache[id]) {
-      setStudioLoadingDetail(false);
-      setStudioDetailFailed(false);
-      return;
-    }
-    void loadDetailForId(id, setStudioLoadingDetail, setStudioDetailFailed);
-  }, [activeStudioEntry?.id, bhajanCache, loadDetailForId]);
-
   // Lazy-fetch Stream detail whenever Stream is open OR minimized dock is active
   useEffect(() => {
     const id = activeStreamEntry?.id;
@@ -432,12 +368,6 @@ export default function App() {
     }
     void loadDetailForId(id, setStreamLoadingDetail, setStreamDetailFailed);
   }, [activeStreamEntry?.id, activeTab, bhajanCache, loadDetailForId, streamSessionActive]);
-
-  useEffect(() => {
-    setActiveRecIndex(0);
-    setSemitoneDelta(0);
-    setActiveScriptIdx(0);
-  }, [activeStudioEntry?.id]);
 
   useEffect(() => {
     setShowStreamLyrics(false);
@@ -465,11 +395,6 @@ export default function App() {
   const handleMediaModeChange = useCallback((next: StreamMediaMode) => {
     setStreamMediaMode(next);
     void saveStoredMediaMode(next);
-  }, []);
-
-  const openEntryInStudio = useCallback((bhajanId: string) => {
-    setSelectedId(bhajanId);
-    setActiveTab('studio');
   }, []);
 
   const playEntryInStream = useCallback(
@@ -513,7 +438,6 @@ export default function App() {
 
       try {
         setIsLoadingAudio(true);
-        setAudioMessage(null);
         await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
         const { sound } = await Audio.Sound.createAsync(
           { uri },
@@ -527,34 +451,13 @@ export default function App() {
         );
         soundRef.current = sound;
         setIsAudioPlaying(true);
-      } catch (err) {
-        setAudioMessage(
-          err instanceof Error
-            ? `Audio error (${apiBaseUrl}): ${err.message}`
-            : 'Unable to play recording.',
-        );
+      } catch {
         setIsAudioPlaying(false);
       } finally {
         setIsLoadingAudio(false);
       }
     },
-    [apiBaseUrl, isAudioPlaying],
-  );
-
-  const studioBasePitch =
-    pitchReference === 'gents' ? activeStudioBhajan?.gentsPitch : activeStudioBhajan?.ladiesPitch;
-  const studioTransposed = useMemo(
-    () => transposePitch(studioBasePitch?.semitoneFromC ?? 2, semitoneDelta),
-    [semitoneDelta, studioBasePitch?.semitoneFromC],
-  );
-
-  const studioLyricsSet =
-    activeStudioBhajan?.lyricsSets[activeScriptIdx] ?? activeStudioBhajan?.lyricsSets[0];
-  const studioActiveRecording =
-    activeStudioBhajan?.recordings[activeRecIndex] ?? activeStudioBhajan?.recordings[0] ?? null;
-  const studioPlayback = useMemo(
-    () => resolvePlaybackAction(studioActiveRecording, apiBaseUrl),
-    [apiBaseUrl, studioActiveRecording],
+    [isAudioPlaying],
   );
 
   const {
@@ -627,67 +530,6 @@ export default function App() {
     void unloadAudio();
   }, [unloadAudio]);
 
-  function openCorrectionModal() {
-    setProposedLyricsText((studioLyricsSet?.lines ?? []).join('\n'));
-    setReasonOrSource('');
-    setCorrectionFeedback(null);
-    setCorrectionOpen(true);
-  }
-
-  async function submitCorrection() {
-    if (!activeStudioEntry) return;
-    const lines = proposedLyricsText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (
-      (lines.length === 0 && !activeStudioBhajan?.lyricsMissing) ||
-      !reasonOrSource.trim() ||
-      !submitterName.trim() ||
-      !submitterEmail.trim()
-    ) {
-      setCorrectionFeedback('Please complete source/reason, your name, and email.');
-      return;
-    }
-
-    try {
-      setSubmittingCorrection(true);
-      setCorrectionFeedback(null);
-      const cleanBase = apiBaseUrl.replace(/\/+$/, '');
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (authToken.trim()) {
-        headers.Authorization = `Bearer ${authToken.trim()}`;
-      }
-      const res = await fetch(`${cleanBase}/api/corrections`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          bhajanId: activeStudioEntry.id,
-          bhajanTitle: activeStudioEntry.title,
-          script: studioLyricsSet?.language ?? 'Roman',
-          originalLyrics: studioLyricsSet?.lines ?? [],
-          proposedLyrics: lines,
-          reasonOrSource: reasonOrSource.trim(),
-          submitterName: submitterName.trim(),
-          submitterEmail: submitterEmail.trim(),
-        }),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
-      }
-      setCorrectionFeedback('Submitted! Queued for moderator review.');
-      setTimeout(() => setCorrectionOpen(false), 1200);
-    } catch (err) {
-      setCorrectionFeedback(
-        err instanceof Error ? `Submit failed: ${err.message}` : 'Unable to submit correction.',
-      );
-    } finally {
-      setSubmittingCorrection(false);
-    }
-  }
-
   function renderRecommendationCard(rec: BhajanRecommendation) {
     const liked = likedSet.has(rec.entry.id);
     return (
@@ -732,19 +574,6 @@ export default function App() {
             <Text style={[styles.smallBtnText, { color: liked ? theme.accent : theme.text }]}>
               {liked ? '♥ Liked' : '♡ Like'}
             </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => openEntryInStudio(rec.entry.id)}
-            style={[
-              styles.smallBtn,
-              {
-                borderWidth: 1,
-                borderColor: theme.border,
-                backgroundColor: theme.surfaceRaised,
-              },
-            ]}
-          >
-            <Text style={[styles.smallBtnText, { color: theme.text }]}>Studio</Text>
           </Pressable>
         </View>
       </View>
@@ -791,11 +620,6 @@ export default function App() {
       >
         <View style={{ flex: 1 }}>
           <Text style={[styles.brandTitle, { color: theme.text }]}>bhaJami · भजामि</Text>
-          <Text style={[styles.brandSubtitle, { color: theme.textMuted }]}>
-            {catalogSource === 'cloud' ? `Cloud v${catalogIndex.version}` : 'Offline Cache'} ·{' '}
-            {catalogIndex.stats.totalBhajans} Bhajans ·{' '}
-            {catalogIndex.stats.verifiedSaiRhythmsCount} Sai Rhythms
-          </Text>
         </View>
         <Pressable
           onPress={() => void refreshCloudCatalog()}
@@ -840,8 +664,8 @@ export default function App() {
                   Your Sathya Sai Bhajans Companion
                 </Text>
                 <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                  Stream all bhajans audio-first (MP3 when available, inline YouTube otherwise),
-                  curate favorites with ♥, and explore multi-script Studio sheets.
+                  Stream bhajans audio-first (MP3 when available, inline YouTube otherwise), curate
+                  favorites with ♥, and discover similar Ragas.
                 </Text>
 
                 <View style={styles.heroActions}>
@@ -873,17 +697,6 @@ export default function App() {
                     </Pressable>
                   )}
 
-                  <Pressable
-                    onPress={() => setActiveTab('studio')}
-                    style={[
-                      styles.secondaryBtn,
-                      { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                    ]}
-                  >
-                    <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
-                      Open Studio
-                    </Text>
-                  </Pressable>
                   <Pressable
                     onPress={() => setActiveTab('liked')}
                     style={[
@@ -948,21 +761,6 @@ export default function App() {
                             >
                               <Text style={[styles.smallBtnText, { color: theme.text }]}>
                                 {liked ? '♥ Liked' : '♡ Like'}
-                              </Text>
-                            </Pressable>
-                            <Pressable
-                              onPress={() => openEntryInStudio(entry.id)}
-                              style={[
-                                styles.smallBtn,
-                                {
-                                  borderWidth: 1,
-                                  borderColor: theme.border,
-                                  backgroundColor: theme.surfaceRaised,
-                                },
-                              ]}
-                            >
-                              <Text style={[styles.smallBtnText, { color: theme.text }]}>
-                                Studio
                               </Text>
                             </Pressable>
                           </View>
@@ -1280,492 +1078,6 @@ export default function App() {
             </View>
           )}
 
-          {/* STUDIO TAB */}
-          {activeTab === 'studio' && (
-            <View style={styles.sectionStack}>
-              {activeStudioEntry && (
-                <View
-                  style={[
-                    styles.card,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
-                  <View style={styles.cardTopRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.bhajanTitle, { color: theme.text }]}>
-                        {activeStudioBhajan?.title || activeStudioEntry.title}
-                      </Text>
-                      <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                        {[
-                          activeStudioBhajan?.deity ?? activeStudioEntry.deity ?? 'Devotional',
-                          activeStudioBhajan?.raga?.name ??
-                            activeStudioEntry.ragaName ??
-                            'Raga Unspecified',
-                          activeStudioBhajan?.beat ?? activeStudioEntry.beat,
-                          activeStudioBhajan?.tempo,
-                        ]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => handleToggleLike(activeStudioEntry.id)}
-                      style={[
-                        styles.smallBtn,
-                        {
-                          borderWidth: 1,
-                          borderColor: likedSet.has(activeStudioEntry.id)
-                            ? theme.accent
-                            : theme.border,
-                          backgroundColor: theme.surfaceRaised,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.smallBtnText,
-                          {
-                            color: likedSet.has(activeStudioEntry.id) ? theme.accent : theme.text,
-                          },
-                        ]}
-                      >
-                        {likedSet.has(activeStudioEntry.id) ? '♥' : '♡'}
-                      </Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.chipWrap}>
-                    {(() => {
-                      const srcBadge = formatMetadataSourceBadge(
-                        activeStudioBhajan?.metadataSource ?? activeStudioEntry.metadataSource,
-                      );
-                      return (
-                        <View
-                          style={[
-                            styles.badge,
-                            {
-                              backgroundColor: srcBadge.verified
-                                ? theme.badgeSuccessBg
-                                : theme.chipBg,
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.badgeText,
-                              {
-                                color: srcBadge.verified ? theme.badgeSuccessText : theme.text,
-                              },
-                            ]}
-                          >
-                            {srcBadge.label}
-                          </Text>
-                        </View>
-                      );
-                    })()}
-                    {activeStudioEntry.missingFields.length > 0 && (
-                      <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
-                        <Text style={[styles.badgeText, { color: theme.textMuted }]}>
-                          Needs {activeStudioEntry.missingFields.length} fields
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-
-                  {studioLoadingDetail && !activeStudioBhajan ? (
-                    <View style={styles.inlineRow}>
-                      <ActivityIndicator color={theme.accent} />
-                      <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                        Loading cloud details…
-                      </Text>
-                    </View>
-                  ) : studioDetailFailed && !activeStudioBhajan ? (
-                    <View style={styles.inlineRow}>
-                      <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                        Unable to fetch full detail.
-                      </Text>
-                      <Pressable
-                        onPress={() =>
-                          void loadDetailForId(
-                            activeStudioEntry.id,
-                            setStudioLoadingDetail,
-                            setStudioDetailFailed,
-                          )
-                        }
-                        style={[
-                          styles.smallBtn,
-                          { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
-                        ]}
-                      >
-                        <Text style={[styles.smallBtnText, { color: theme.text }]}>Retry</Text>
-                      </Pressable>
-                    </View>
-                  ) : null}
-
-                  {/* Nullable-safe Pitch Transposer */}
-                  <View
-                    style={[
-                      styles.pitchBox,
-                      { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
-                    ]}
-                  >
-                    <View style={styles.pitchHeaderRow}>
-                      <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>
-                        KEY &amp; SHRUTI TRANSPOSER
-                      </Text>
-                      <View style={styles.refSwitch}>
-                        {(['gents', 'ladies'] as const).map((refKey) => {
-                          const active = pitchReference === refKey;
-                          return (
-                            <Pressable
-                              key={refKey}
-                              onPress={() => setPitchReference(refKey)}
-                              style={[
-                                styles.refPill,
-                                { backgroundColor: active ? theme.accent : theme.chipBg },
-                              ]}
-                            >
-                              <Text
-                                style={[
-                                  styles.refPillText,
-                                  { color: active ? theme.accentText : theme.text },
-                                ]}
-                              >
-                                {refKey === 'gents' ? 'Gents' : 'Ladies'}
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                      </View>
-                    </View>
-
-                    <View style={styles.transposeControls}>
-                      <Pressable
-                        onPress={() => setSemitoneDelta((d) => Math.max(-6, d - 1))}
-                        style={[
-                          styles.stepBtn,
-                          { borderColor: theme.border, backgroundColor: theme.surface },
-                        ]}
-                      >
-                        <Text style={[styles.stepBtnText, { color: theme.text }]}>−1 st</Text>
-                      </Pressable>
-                      <View style={styles.pitchReadout}>
-                        <Text style={[styles.pitchValue, { color: theme.text }]}>
-                          {studioTransposed.pancham} ({studioTransposed.western})
-                        </Text>
-                        <Text style={[styles.pitchSub, { color: theme.textMuted }]}>
-                          {studioTransposed.freqHz.toFixed(1)} Hz · {studioTransposed.deltaLabel}
-                          {!studioBasePitch ? ' · Default ref (D)' : ''}
-                        </Text>
-                      </View>
-                      <Pressable
-                        onPress={() => setSemitoneDelta((d) => Math.min(6, d + 1))}
-                        style={[
-                          styles.stepBtn,
-                          { borderColor: theme.border, backgroundColor: theme.surface },
-                        ]}
-                      >
-                        <Text style={[styles.stepBtnText, { color: theme.text }]}>+1 st</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-
-                  {/* Recording Vault */}
-                  {activeStudioBhajan?.recordings.length ? (
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      style={styles.chipsRow}
-                    >
-                      {activeStudioBhajan.recordings.map((rec, idx) => (
-                        <Pressable
-                          key={rec.id}
-                          onPress={() => {
-                            setActiveRecIndex(idx);
-                            void unloadAudio();
-                          }}
-                          style={[
-                            styles.chip,
-                            {
-                              backgroundColor: idx === activeRecIndex ? theme.accent : theme.chipBg,
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={{
-                              color: idx === activeRecIndex ? theme.accentText : theme.text,
-                              fontSize: 12,
-                              fontWeight: '600',
-                            }}
-                          >
-                            {rec.label}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  ) : null}
-
-                  {studioPlayback.kind === 'youtube' ? (
-                    <View style={styles.sectionStack}>
-                      <MobileYouTubePlayer
-                        videoId={studioPlayback.videoId}
-                        title={studioActiveRecording?.label || activeStudioEntry.title}
-                        startSec={studioActiveRecording?.startSec}
-                        endSec={studioActiveRecording?.endSec}
-                        embeddable={studioPlayback.embeddable}
-                        autoPlay={false}
-                        onMediaModeChange={handleMediaModeChange}
-                        theme={theme}
-                      />
-                    </View>
-                  ) : studioPlayback.kind === 'audio' ? (
-                    <View style={styles.playerRow}>
-                      <Pressable
-                        onPress={() => {
-                          if (streamSessionActive) setStreamSessionActive(false);
-                          void playAudioUri(studioPlayback.uri);
-                        }}
-                        style={[styles.playBtn, { backgroundColor: theme.accent }]}
-                      >
-                        {isLoadingAudio ? (
-                          <ActivityIndicator color={theme.accentText} />
-                        ) : (
-                          <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                            {isAudioPlaying && loadedAudioUriRef.current === studioPlayback.uri
-                              ? 'Pause Jam Track'
-                              : 'Play Jam Track'}
-                          </Text>
-                        )}
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                      {studioPlayback.reason}
-                    </Text>
-                  )}
-
-                  <View style={styles.playerRow}>
-                    <Pressable
-                      onPress={openCorrectionModal}
-                      style={[
-                        styles.secondaryBtn,
-                        { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                      ]}
-                    >
-                      <Text style={[styles.secondaryBtnText, { color: theme.text }]}>
-                        {activeStudioBhajan?.lyricsMissing
-                          ? 'Add Lyrics / Metadata'
-                          : 'Suggest Edit'}
-                      </Text>
-                    </Pressable>
-                  </View>
-
-                  {audioMessage ? (
-                    <Text style={[styles.statusText, { color: theme.textMuted }]}>
-                      {audioMessage}
-                    </Text>
-                  ) : null}
-
-                  {/* Multi-Script Lyrics */}
-                  <View style={styles.lyricsBox}>
-                    <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>LYRICS</Text>
-                    {(activeStudioBhajan?.lyricsSets.length ?? 0) > 1 && (
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        style={styles.chipsRow}
-                      >
-                        {activeStudioBhajan?.lyricsSets.map((ls, idx) => (
-                          <Pressable
-                            key={`${ls.language}-${idx}`}
-                            onPress={() => setActiveScriptIdx(idx)}
-                            style={[
-                              styles.chip,
-                              {
-                                backgroundColor:
-                                  idx === activeScriptIdx ? theme.accent : theme.chipBg,
-                              },
-                            ]}
-                          >
-                            <Text
-                              style={{
-                                color: idx === activeScriptIdx ? theme.accentText : theme.text,
-                                fontSize: 12,
-                                fontWeight: '600',
-                              }}
-                            >
-                              {ls.language}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </ScrollView>
-                    )}
-                    {studioLyricsSet?.lines?.length ? (
-                      studioLyricsSet.lines.map((line, i) => (
-                        <Text
-                          key={`${activeStudioEntry.id}-line-${i}`}
-                          style={[styles.lyricLine, { color: theme.text }]}
-                        >
-                          {line}
-                        </Text>
-                      ))
-                    ) : (
-                      <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                        Lyrics are not yet populated for this bhajan. Tap “Add Lyrics / Metadata” to
-                        contribute.
-                      </Text>
-                    )}
-                  </View>
-
-                  {/* Raga, Notation & Meaning */}
-                  {(activeStudioBhajan?.raga?.arohanam ||
-                    activeStudioBhajan?.firstLineNotes?.sargam ||
-                    activeStudioBhajan?.meaning ||
-                    (activeStudioBhajan?.glossary.length ?? 0) > 0) && (
-                    <View
-                      style={[
-                        styles.pitchBox,
-                        { backgroundColor: theme.surfaceRaised, borderColor: theme.border },
-                      ]}
-                    >
-                      <Text style={[styles.sectionLabel, { color: theme.textMuted }]}>
-                        RAGA, NOTATION &amp; MEANING
-                      </Text>
-                      {activeStudioBhajan?.raga?.arohanam ? (
-                        <Text style={[styles.metaLine, { color: theme.text }]}>
-                          Arohanam: {activeStudioBhajan.raga.arohanam}
-                        </Text>
-                      ) : null}
-                      {activeStudioBhajan?.raga?.avarohanam ? (
-                        <Text style={[styles.metaLine, { color: theme.text }]}>
-                          Avarohanam: {activeStudioBhajan.raga.avarohanam}
-                        </Text>
-                      ) : null}
-                      {activeStudioBhajan?.firstLineNotes?.sargam ? (
-                        <Text style={[styles.metaLine, { color: theme.text }]}>
-                          Sargam: {activeStudioBhajan.firstLineNotes.sargam}
-                        </Text>
-                      ) : null}
-                      {activeStudioBhajan?.firstLineNotes?.westernInC ? (
-                        <Text style={[styles.metaLine, { color: theme.text }]}>
-                          Western (C): {activeStudioBhajan.firstLineNotes.westernInC}
-                        </Text>
-                      ) : null}
-                      {activeStudioBhajan?.meaning ? (
-                        <Text style={[styles.metaLine, { color: theme.text }]}>
-                          Meaning: {activeStudioBhajan.meaning}
-                        </Text>
-                      ) : null}
-                      {activeStudioBhajan?.glossary.slice(0, 6).map((g) => (
-                        <Text key={g.term} style={[styles.listMeta, { color: theme.textMuted }]}>
-                          • {g.term}: {g.description}
-                        </Text>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Searchable Catalog Browser */}
-              <View style={styles.catalogSection}>
-                <Text style={[styles.sectionHeading, { color: theme.text }]}>
-                  Browse Catalog ({filteredStudioEntries.length})
-                </Text>
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  placeholder="Phonetic search: Vittala, Narayana, Bowli, Ganesha..."
-                  placeholderTextColor={theme.textMuted}
-                  style={[
-                    styles.searchInput,
-                    { backgroundColor: theme.surface, borderColor: theme.border, color: theme.text },
-                  ]}
-                />
-                <Pressable
-                  onPress={() => setOnlyVerified((v) => !v)}
-                  style={[
-                    styles.smallBtn,
-                    {
-                      alignSelf: 'flex-start',
-                      borderWidth: 1,
-                      borderColor: onlyVerified ? theme.accent : theme.border,
-                      backgroundColor: onlyVerified ? theme.accent : theme.surface,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.smallBtnText,
-                      { color: onlyVerified ? theme.accentText : theme.text },
-                    ]}
-                  >
-                    {onlyVerified ? '✓ Sai Rhythms Only' : 'Filter: Sai Rhythms Only'}
-                  </Text>
-                </Pressable>
-
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.chipsRow}
-                >
-                  {deities.map((deity) => (
-                    <Pressable
-                      key={deity}
-                      onPress={() => setSelectedDeity(deity)}
-                      style={[
-                        styles.chip,
-                        { backgroundColor: selectedDeity === deity ? theme.accent : theme.chipBg },
-                      ]}
-                    >
-                      <Text
-                        style={{
-                          color: selectedDeity === deity ? theme.accentText : theme.text,
-                          fontSize: 12,
-                          fontWeight: '600',
-                        }}
-                      >
-                        {deity}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-
-                <FlatList
-                  data={filteredStudioEntries.slice(0, 60)}
-                  keyExtractor={(item) => item.id}
-                  scrollEnabled={false}
-                  renderItem={({ item }) => {
-                    const active = item.id === activeStudioEntry?.id;
-                    return (
-                      <Pressable
-                        onPress={() => openEntryInStudio(item.id)}
-                        style={[
-                          styles.listRow,
-                          {
-                            backgroundColor: active ? theme.surfaceRaised : theme.surface,
-                            borderColor: active ? theme.accent : theme.border,
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.listTitle, { color: theme.text }]}>{item.title}</Text>
-                        <Text style={[styles.listMeta, { color: theme.textMuted }]}>
-                          {[
-                            item.deity,
-                            item.ragaName,
-                            `${item.recordingCount} audio`,
-                            item.metadataSource === 'sairhythms_verified' ? 'Verified' : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </Text>
-                      </Pressable>
-                    );
-                  }}
-                />
-              </View>
-            </View>
-          )}
-
           {/* LIKED TAB */}
           {activeTab === 'liked' && (
             <View style={styles.sectionStack}>
@@ -1869,19 +1181,6 @@ export default function App() {
                           </Text>
                         </Pressable>
                         <Pressable
-                          onPress={() => openEntryInStudio(entry.id)}
-                          style={[
-                            styles.smallBtn,
-                            {
-                              borderWidth: 1,
-                              borderColor: theme.border,
-                              backgroundColor: theme.surfaceRaised,
-                            },
-                          ]}
-                        >
-                          <Text style={[styles.smallBtnText, { color: theme.text }]}>Studio</Text>
-                        </Pressable>
-                        <Pressable
                           onPress={() => handleToggleLike(entry.id)}
                           style={[
                             styles.smallBtn,
@@ -1901,7 +1200,7 @@ export default function App() {
                   ))
                 ) : (
                   <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                    No liked bhajans yet. Start Random Stream or browse Studio and tap ♡ Like!
+                    No liked bhajans yet. Start Random Stream or search Home and tap ♡ Like!
                   </Text>
                 )}
               </View>
@@ -2215,15 +1514,6 @@ export default function App() {
                   >
                     <Text style={[styles.smallBtnText, { color: theme.accentText }]}>Next ▶</Text>
                   </Pressable>
-                  <Pressable
-                    onPress={() => openEntryInStudio(activeStreamEntry.id)}
-                    style={[
-                      styles.smallBtn,
-                      { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.bg },
-                    ]}
-                  >
-                    <Text style={[styles.smallBtnText, { color: theme.text }]}>Open in Studio</Text>
-                  </Pressable>
                 </View>
               </View>
             )}
@@ -2337,7 +1627,6 @@ export default function App() {
           [
             ['home', 'Home'],
             ['stream', 'Stream'],
-            ['studio', 'Studio'],
             ['liked', `Liked (${likedEntries.length})`],
           ] as const
         ).map(([tabKey, label]) => {
@@ -2363,121 +1652,6 @@ export default function App() {
           );
         })}
       </View>
-
-      {/* Suggest Correction Modal */}
-      <Modal visible={correctionOpen} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <ScrollView contentContainerStyle={styles.modalScroll}>
-            <View
-              style={[
-                styles.modalSheet,
-                { backgroundColor: theme.surface, borderColor: theme.border },
-              ]}
-            >
-              <Text style={[styles.bhajanTitle, { color: theme.text }]}>
-                Suggest Edit or Missing Lyrics
-              </Text>
-              <Text style={[styles.metaLine, { color: theme.textMuted }]}>
-                Submits to the community moderation queue for review.
-              </Text>
-
-              <TextInput
-                value={proposedLyricsText}
-                onChangeText={setProposedLyricsText}
-                multiline
-                numberOfLines={6}
-                placeholder="One lyric line per line"
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.modalTextArea,
-                  { borderColor: theme.border, color: theme.text, backgroundColor: theme.bg },
-                ]}
-              />
-              <TextInput
-                value={reasonOrSource}
-                onChangeText={setReasonOrSource}
-                placeholder="Source / reason (e.g. Sai Rhythms book, Prashanthi Mandir)"
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.modalInput,
-                  { borderColor: theme.border, color: theme.text, backgroundColor: theme.bg },
-                ]}
-              />
-              <TextInput
-                value={submitterName}
-                onChangeText={setSubmitterName}
-                placeholder="Your name"
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.modalInput,
-                  { borderColor: theme.border, color: theme.text, backgroundColor: theme.bg },
-                ]}
-              />
-              <TextInput
-                value={submitterEmail}
-                onChangeText={setSubmitterEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                placeholder="Your email"
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.modalInput,
-                  { borderColor: theme.border, color: theme.text, backgroundColor: theme.bg },
-                ]}
-              />
-              <TextInput
-                value={apiBaseUrl}
-                onChangeText={setApiBaseUrl}
-                autoCapitalize="none"
-                placeholder="bhaJami Portal API URL"
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.modalInput,
-                  { borderColor: theme.border, color: theme.text, backgroundColor: theme.bg },
-                ]}
-              />
-              <TextInput
-                value={authToken}
-                onChangeText={setAuthToken}
-                autoCapitalize="none"
-                placeholder="Optional Firebase ID Bearer Token"
-                placeholderTextColor={theme.textMuted}
-                style={[
-                  styles.modalInput,
-                  { borderColor: theme.border, color: theme.text, backgroundColor: theme.bg },
-                ]}
-              />
-
-              {correctionFeedback ? (
-                <Text style={[styles.statusText, { color: theme.accent }]}>
-                  {correctionFeedback}
-                </Text>
-              ) : null}
-
-              <View style={styles.playerRow}>
-                <Pressable
-                  onPress={() => setCorrectionOpen(false)}
-                  style={[
-                    styles.secondaryBtn,
-                    { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-                  ]}
-                >
-                  <Text style={[styles.secondaryBtnText, { color: theme.text }]}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => void submitCorrection()}
-                  disabled={submittingCorrection}
-                  style={[styles.playBtn, { backgroundColor: theme.accent }]}
-                >
-                  <Text style={[styles.playBtnText, { color: theme.accentText }]}>
-                    {submittingCorrection ? 'Sending...' : 'Submit for Review'}
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

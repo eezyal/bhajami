@@ -13,9 +13,9 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'bhaJami — Sathya Sai Bhajans Jam Studio',
+  title: 'bhaJami — Sathya Sai Bhajans',
   description:
-    'Dual-theme Sathya Sai Bhajans Studio with continuous Bhajan Stream radio, login-synced Liked playlist, Raga recommendations, and Tanpura Shruti box.',
+    'Sathya Sai Bhajans companion with continuous Bhajan Stream radio, login-synced Liked playlist, and Raga recommendations.',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,

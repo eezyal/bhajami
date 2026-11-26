@@ -7,6 +7,7 @@ import {
   computeLyricsDiff,
   type Bhajan,
   type BhajanRevision,
+  type CatalogStats,
   type IngestionRunDoc,
   type LyricCorrection,
   type OutboxEmailRecord,
@@ -36,6 +37,8 @@ interface AdminModerationClientProps {
   initialRevisions: BhajanRevision[];
   initialSelectedId?: string;
   cloudMode?: boolean;
+  catalogVersion?: number;
+  catalogStats?: CatalogStats;
 }
 
 function submissionTypeLabel(submissionType?: SubmissionType): string {
@@ -58,6 +61,8 @@ export function AdminModerationClient({
   initialRevisions,
   initialSelectedId,
   cloudMode = false,
+  catalogVersion,
+  catalogStats,
 }: AdminModerationClientProps) {
   const [corrections, setCorrections] = useState(initialCorrections);
   const [outbox, setOutbox] = useState(initialOutbox);
@@ -375,7 +380,7 @@ export function AdminModerationClient({
       await reloadAll(token);
       setBanner(
         action === 'approve'
-          ? `Approved & published ${submissionTypeLabel(selected.submissionType)} for "${selected.bhajanTitle}". Live Jam Studio updated immediately!`
+          ? `Approved & published ${submissionTypeLabel(selected.submissionType)} for "${selected.bhajanTitle}". Live catalog updated immediately!`
           : action === 'reject'
             ? `Rejected "${selected.bhajanTitle}" with reason and sent feedback + reply link to ${selected.submitterEmail}.`
             : `Sent follow-up question to ${selected.submitterEmail} for "${selected.bhajanTitle}" and moved it to Info Requested.`,
@@ -490,7 +495,7 @@ export function AdminModerationClient({
               </button>
             )}
             <Link href="/" className="btn btn-primary">
-              Back to Jam Studio
+              Back to bhaJami
             </Link>
             <ThemeToggle />
           </div>
@@ -528,7 +533,7 @@ export function AdminModerationClient({
                     Sign in with Google
                   </button>
                   <Link href="/" className="btn">
-                    Back to Jam Studio
+                    Back to bhaJami
                   </Link>
                 </div>
               </div>
@@ -551,7 +556,7 @@ export function AdminModerationClient({
                     Sign Out &amp; Switch Account
                   </button>
                   <Link href="/" className="btn">
-                    Back to Jam Studio
+                    Back to bhaJami
                   </Link>
                 </div>
               </div>
@@ -559,6 +564,24 @@ export function AdminModerationClient({
           </section>
         ) : (
           <>
+        {catalogStats && (
+          <div className="stats-strip" aria-label="Admin Catalog Source Overview">
+            {catalogVersion !== undefined && (
+              <span className="badge">Catalog v{catalogVersion}</span>
+            )}
+            <span className="badge">Total Bhajans: {catalogStats.totalBhajans}</span>
+            <span className="badge badge-verified">
+              Sai Rhythms Enriched: {catalogStats.verifiedSaiRhythmsCount}
+            </span>
+            <span className="badge">
+              BhajanDownloader (SSS Media): {catalogStats.bhajanDownloaderCount} MP3s
+            </span>
+            <span className="badge">RaviMp3 Archive: {catalogStats.raviMp3Count} MP3s</span>
+            {(catalogStats.youtubeVideosCount ?? 0) > 0 && (
+              <span className="badge">YouTube Videos: {catalogStats.youtubeVideosCount}</span>
+            )}
+          </div>
+        )}
         <div className="stats-strip">
           <span className="badge badge-pending">
             Waiting for Approval: {pendingList.length}
