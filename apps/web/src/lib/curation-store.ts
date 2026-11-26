@@ -48,6 +48,10 @@ export type CurationActionPayload =
       videoId?: string;
       saveAliasTitle?: string;
       note?: string;
+      lyricsSets?: LyricsSet[];
+      lyricsText?: string;
+      script?: string;
+      metadata?: ProposedMetadataPatch;
     }
   | {
       action: 'keep_distinct';
@@ -489,8 +493,130 @@ function prepareApproveMergeData(params: {
     (c) => c.targetBhajanId === target.id,
   );
 
+  // Backfill target lyrics/metadata from source when missing, then apply any Admin edits
+  const seedLyricsSets =
+    (target.lyricsSets?.length ?? 0) > 0 ? target.lyricsSets : source.lyricsSets ?? [];
+  const nextLyricsSets = buildCuratedLyricsSets({
+    existing: { ...target, lyricsSets: seedLyricsSets },
+    lyricsSets: payload.lyricsSets,
+    lyricsText: payload.lyricsText,
+    script: payload.script,
+  });
+
+  const meta = payload.metadata ?? {};
+  const pickStr = (edited?: string, tVal?: string | null, sVal?: string | null) =>
+    edited?.trim() || tVal?.trim() || sVal?.trim() || undefined;
+
+  const ragaNameFromMeta = pickStr(
+    meta.ragaName || meta.raga,
+    target.raga?.name,
+    source.raga?.name,
+  );
+  const arohanamFromMeta = pickStr(meta.arohanam, target.raga?.arohanam, source.raga?.arohanam);
+  const avarohanamFromMeta = pickStr(
+    meta.avarohanam,
+    target.raga?.avarohanam,
+    source.raga?.avarohanam,
+  );
+  const nextRaga: RagaInfo | undefined =
+    ragaNameFromMeta || arohanamFromMeta || avarohanamFromMeta || target.raga?.westernInC
+      ? {
+          name: ragaNameFromMeta || 'Unspecified',
+          arohanam: arohanamFromMeta,
+          avarohanam: avarohanamFromMeta,
+          westernInC: target.raga?.westernInC ?? source.raga?.westernInC,
+        }
+      : undefined;
+
+  const sargamMerged = pickStr(
+    meta.firstLineSargam,
+    target.firstLineNotes?.sargam,
+    source.firstLineNotes?.sargam,
+  );
+  const westernMerged = pickStr(
+    meta.firstLineWestern,
+    target.firstLineNotes?.westernInC,
+    source.firstLineNotes?.westernInC,
+  );
+  const nextFirstLineNotes =
+    sargamMerged || westernMerged
+      ? { sargam: sargamMerged, westernInC: westernMerged }
+      : undefined;
+
+  const gentsRawMerged = pickStr(
+    meta.gentsPitchRaw,
+    target.gentsPitchRaw || target.gentsPitch?.raw,
+    source.gentsPitchRaw || source.gentsPitch?.raw,
+  );
+  const ladiesRawMerged = pickStr(
+    meta.ladiesPitchRaw,
+    target.ladiesPitchRaw || target.ladiesPitch?.raw,
+    source.ladiesPitchRaw || source.ladiesPitch?.raw,
+  );
+  const beatMerged = pickStr(
+    meta.beat?.trim() || meta.tala?.trim(),
+    target.beat,
+    source.beat,
+  );
+  const tempoMerged =
+    meta.tempo !== undefined && String(meta.tempo).trim() !== ''
+      ? String(meta.tempo).trim()
+      : target.tempo || source.tempo || undefined;
+
+  const ov: CloudApprovedOverride = {
+    bhajanId: target.id,
+    slug: target.slug,
+    title: pickStr(meta.title, target.title, source.title) || target.title,
+    deity: pickStr(meta.deity, target.deity, source.deity),
+    language: pickStr(meta.language, target.language, source.language),
+    beat: beatMerged,
+    tala: pickStr(meta.tala, target.tala, source.tala),
+    tempo: tempoMerged,
+    meaning: pickStr(meta.meaning, target.meaning, source.meaning),
+    raga: nextRaga,
+    gentsPitchRaw: gentsRawMerged,
+    ladiesPitchRaw: ladiesRawMerged,
+    firstLineNotes: nextFirstLineNotes,
+    notesRange: pickStr(meta.notesRange, target.notesRange, source.notesRange),
+    sheetMusicUrl: pickStr(meta.sheetMusicUrl, target.sheetMusicUrl, source.sheetMusicUrl),
+    lyricsSets: nextLyricsSets,
+    lyricsMissing: nextLyricsSets.length === 0,
+    isEstimated: false,
+    recordings: orderedRecordings,
+    defaultRecordingId,
+    slugAliases: aliasSlugs,
+    ...(target.matchCandidates ? { matchCandidates: nextTargetCandidates } : {}),
+    bhajamiOverride: true,
+    updatedAt: now,
+  };
+
+  const targetPatch = buildCanonicalBhajanFields(ov, target);
+  delete targetPatch.createdAt;
+
   const nextTarget: Bhajan = {
     ...target,
+    title: ov.title || target.title,
+    deity: ov.deity ?? target.deity,
+    language: ov.language ?? target.language,
+    beat: ov.beat ?? target.beat,
+    tala: ov.tala ?? target.tala,
+    tempo: ov.tempo ?? target.tempo,
+    meaning: ov.meaning ?? target.meaning,
+    raga: nextRaga ?? target.raga,
+    gentsPitchRaw: gentsRawMerged ?? target.gentsPitchRaw,
+    ladiesPitchRaw: ladiesRawMerged ?? target.ladiesPitchRaw,
+    gentsPitch: gentsRawMerged
+      ? parsePitchStringOptional(gentsRawMerged) ?? target.gentsPitch
+      : target.gentsPitch,
+    ladiesPitch: ladiesRawMerged
+      ? parsePitchStringOptional(ladiesRawMerged) ?? target.ladiesPitch
+      : target.ladiesPitch,
+    firstLineNotes: nextFirstLineNotes ?? target.firstLineNotes,
+    notesRange: ov.notesRange ?? target.notesRange,
+    sheetMusicUrl: ov.sheetMusicUrl ?? target.sheetMusicUrl,
+    lyricsSets: nextLyricsSets,
+    lyricsMissing: nextLyricsSets.length === 0,
+    isEstimated: false,
     recordings: orderedRecordings,
     defaultRecordingId,
     slugAliases: aliasSlugs,
@@ -524,7 +650,7 @@ function prepareApproveMergeData(params: {
     sourceBhajanId: source.id,
     sourceTitle: source.title,
     targetBhajanId: target.id,
-    targetTitle: target.title,
+    targetTitle: nextTarget.title,
     candidateScore: matchedCandidate?.score ?? null,
     candidateReason: matchedCandidate?.reason ?? null,
     defaultRecordingId,
@@ -540,6 +666,8 @@ function prepareApproveMergeData(params: {
     defaultRecordingId,
     aliasSlugs,
     nextTargetCandidates,
+    ov,
+    targetPatch,
     nextTarget,
     aliasDoc,
     logEntry,
@@ -1097,19 +1225,7 @@ export async function executeCurationAction(
           mergedTarget = prep.nextTarget;
           logEntry = prep.logEntry;
 
-          tx.set(
-            targetRef,
-            {
-              recordings: prep.orderedRecordings,
-              defaultRecordingId: prep.defaultRecordingId,
-              slugAliases: prep.aliasSlugs,
-              ...(target.matchCandidates ? { matchCandidates: prep.nextTargetCandidates } : {}),
-              bhajamiOverride: true,
-              missingFields: prep.nextTarget.missingFields,
-              updatedAt: now,
-            },
-            { merge: true },
-          );
+          tx.set(targetRef, prep.targetPatch, { merge: true });
 
           if (prep.aliasDoc) {
             aliasId = prep.aliasDoc.id;
@@ -1241,23 +1357,12 @@ export async function executeCurationAction(
       const target = parseBhajanRecord(payload.targetBhajanId, targetFields);
       const prep = prepareApproveMergeData({ source, target, payload, reviewer, now });
 
-      const targetPatch: Record<string, unknown> = {
-        recordings: prep.orderedRecordings,
-        defaultRecordingId: prep.defaultRecordingId,
-        slugAliases: prep.aliasSlugs,
-        bhajamiOverride: true,
-        missingFields: prep.nextTarget.missingFields,
-        updatedAt: now,
-      };
-      if (target.matchCandidates) {
-        targetPatch.matchCandidates = prep.nextTargetCandidates;
-      }
       await restPatchDoc(
         'bhajans',
         target.id,
-        targetPatch,
+        prep.targetPatch,
         idToken,
-        Object.keys(targetPatch),
+        Object.keys(prep.targetPatch),
       );
 
       let aliasId: string | undefined;
@@ -1414,14 +1519,10 @@ export async function executeCurationAction(
     const existingOv = localOverrides[target.id];
     const nextOv: CloudApprovedOverride = {
       ...existingOv,
-      bhajanId: target.id,
-      recordings: prep.orderedRecordings,
+      ...prep.ov,
       addedRecordings: undefined,
-      defaultRecordingId: prep.defaultRecordingId,
-      slugAliases: prep.aliasSlugs,
-      ...(target.matchCandidates ? { matchCandidates: prep.nextTargetCandidates } : {}),
-      bhajamiOverride: true,
-      updatedAt: now,
+      gentsPitch: prep.nextTarget.gentsPitch ?? undefined,
+      ladiesPitch: prep.nextTarget.ladiesPitch ?? undefined,
     };
     localOverrides[target.id] = nextOv;
     writeLocalJson('approved-overrides.json', localOverrides);

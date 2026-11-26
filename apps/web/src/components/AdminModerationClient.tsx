@@ -137,6 +137,8 @@ export function AdminModerationClient({
     Record<string, string>
   >({});
   const [duplicateLog, setDuplicateLog] = useState<DuplicateClearanceLogEntry[]>([]);
+  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState(0);
+  const [curationFormDirty, setCurationFormDirty] = useState(false);
   const fetchedTargetIdsRef = useRef<Set<string>>(new Set());
   const mountedRef = useRef(true);
 
@@ -264,25 +266,76 @@ export function AdminModerationClient({
     [curationItems, selectedCurationId],
   );
 
+  const candidateList = selectedCurationItem?.matchCandidates ?? [];
+  const safeCandidateIdx =
+    candidateList.length > 0 ? Math.min(selectedCandidateIdx, candidateList.length - 1) : 0;
+  const activeCandidate = candidateList[safeCandidateIdx] ?? null;
+  const activeTargetState = activeCandidate
+    ? candidateTargets[activeCandidate.targetBhajanId]
+    : undefined;
+  const activeTargetLoaded = activeCandidate
+    ? activeTargetState !== undefined && activeTargetState !== 'loading'
+    : true;
+  const activeTargetDoc =
+    activeTargetState && activeTargetState !== 'loading' ? activeTargetState : null;
+
   useEffect(() => {
-    if (selectedCurationItem) {
-      setCuratedLyricsText(selectedCurationItem.lyricsSets[0]?.lines.join('\n') || '');
-      setCuratedScript(selectedCurationItem.lyricsSets[0]?.language || 'Sanskrit / Hindi (Roman)');
-      setCuratedMeta({
-        deity: selectedCurationItem.deity || '',
-        ragaName: selectedCurationItem.raga?.name || '',
-        arohanam: selectedCurationItem.raga?.arohanam || '',
-        avarohanam: selectedCurationItem.raga?.avarohanam || '',
-        beat: selectedCurationItem.beat || '',
-        tempo: selectedCurationItem.tempo || '',
-        gentsPitchRaw: selectedCurationItem.gentsPitchRaw || selectedCurationItem.gentsPitch?.raw || '',
-        ladiesPitchRaw: selectedCurationItem.ladiesPitchRaw || selectedCurationItem.ladiesPitch?.raw || '',
-        firstLineSargam: selectedCurationItem.firstLineNotes?.sargam || '',
-        meaning: selectedCurationItem.meaning || '',
-      });
-      setDismissReason('');
-    }
-  }, [selectedCurationItem]);
+    setSelectedCandidateIdx(0);
+    setCurationFormDirty(false);
+    setDismissReason('');
+  }, [selectedCurationItem?.id]);
+
+  useEffect(() => {
+    setCurationFormDirty(false);
+  }, [activeCandidate?.targetBhajanId]);
+
+  useEffect(() => {
+    if (!selectedCurationItem || curationFormDirty) return;
+    const targetLines = activeTargetDoc?.lyricsSets?.[0]?.lines ?? [];
+    const sourceLines = selectedCurationItem.lyricsSets?.[0]?.lines ?? [];
+    const chosenSet =
+      targetLines.length > 0
+        ? activeTargetDoc?.lyricsSets?.[0]
+        : sourceLines.length > 0
+          ? selectedCurationItem.lyricsSets?.[0]
+          : null;
+
+    setCuratedLyricsText(chosenSet?.lines?.join('\n') || '');
+    setCuratedScript(chosenSet?.language || 'Sanskrit / Hindi (Roman)');
+    const pick = (...vals: Array<string | null | undefined>) =>
+      vals.find((v) => typeof v === 'string' && v.trim().length > 0)?.trim() || '';
+
+    setCuratedMeta({
+      deity: pick(activeTargetDoc?.deity, selectedCurationItem.deity),
+      ragaName: pick(activeTargetDoc?.raga?.name, selectedCurationItem.raga?.name),
+      arohanam: pick(activeTargetDoc?.raga?.arohanam, selectedCurationItem.raga?.arohanam),
+      avarohanam: pick(activeTargetDoc?.raga?.avarohanam, selectedCurationItem.raga?.avarohanam),
+      beat: pick(
+        activeTargetDoc?.beat,
+        activeTargetDoc?.tala,
+        selectedCurationItem.beat,
+        selectedCurationItem.tala,
+      ),
+      tempo: pick(activeTargetDoc?.tempo, selectedCurationItem.tempo),
+      gentsPitchRaw: pick(
+        activeTargetDoc?.gentsPitchRaw,
+        activeTargetDoc?.gentsPitch?.raw,
+        selectedCurationItem.gentsPitchRaw,
+        selectedCurationItem.gentsPitch?.raw,
+      ),
+      ladiesPitchRaw: pick(
+        activeTargetDoc?.ladiesPitchRaw,
+        activeTargetDoc?.ladiesPitch?.raw,
+        selectedCurationItem.ladiesPitchRaw,
+        selectedCurationItem.ladiesPitch?.raw,
+      ),
+      firstLineSargam: pick(
+        activeTargetDoc?.firstLineNotes?.sargam,
+        selectedCurationItem.firstLineNotes?.sargam,
+      ),
+      meaning: pick(activeTargetDoc?.meaning, selectedCurationItem.meaning),
+    });
+  }, [activeTargetDoc, curationFormDirty, selectedCurationItem]);
 
   useEffect(() => {
     const candidates = selectedCurationItem?.matchCandidates ?? [];
@@ -1289,273 +1342,352 @@ export function AdminModerationClient({
                         />
                       ) : null}
 
-                      {(selectedCurationItem.matchCandidates?.length ?? 0) > 0 && (
-                        <div style={{ marginBottom: '1rem' }}>
-                          <div className="control-label">Candidate Matches (Doubt Resolution)</div>
-                          <div style={{ display: 'grid', gap: '0.75rem' }}>
-                            {selectedCurationItem.matchCandidates!.map((cand) => {
-                              const pairKey = `${selectedCurationItem.id}::${cand.targetBhajanId}`;
-                              const targetState = candidateTargets[cand.targetBhajanId];
-                              const targetLoaded = targetState !== undefined && targetState !== 'loading';
-                              const targetDoc =
-                                targetState && targetState !== 'loading' ? targetState : null;
+                      {activeCandidate && (() => {
+                        const cand = activeCandidate;
+                        const pairKey = `${selectedCurationItem.id}::${cand.targetBhajanId}`;
+                        const targetLoaded = activeTargetLoaded;
+                        const targetDoc = activeTargetDoc;
 
-                              const combinedMap = new Map<
-                                string,
-                                { rec: RecordingSource; origin: string }
-                              >();
-                              const recDedupKey = (rec: RecordingSource) =>
-                                rec.youtubeVideoId
-                                  ? `yt:${rec.youtubeVideoId}`
-                                  : rec.externalUrl || rec.localPath || rec.id;
+                        const combinedMap = new Map<
+                          string,
+                          { rec: RecordingSource; origin: string }
+                        >();
+                        const recDedupKey = (rec: RecordingSource) =>
+                          rec.youtubeVideoId
+                            ? `yt:${rec.youtubeVideoId}`
+                            : rec.externalUrl || rec.localPath || rec.id;
 
-                              for (const rec of targetDoc?.recordings ?? []) {
-                                const k = recDedupKey(rec);
-                                if (!combinedMap.has(k)) {
-                                  combinedMap.set(k, { rec, origin: 'Keep Target' });
-                                }
-                              }
-                              for (const rec of selectedCurationItem.recordings ?? []) {
-                                const k = recDedupKey(rec);
-                                const existing = combinedMap.get(k);
-                                if (!existing) {
-                                  combinedMap.set(k, { rec, origin: 'Incoming Duplicate' });
-                                } else if (existing.origin === 'Keep Target') {
-                                  existing.origin = 'Keep Target & Incoming (Shared)';
-                                }
-                              }
-                              const combinedRecordings = Array.from(combinedMap.values());
-                              const chosenDefaultId = selectedDefaultRecByPair[pairKey] || '';
-                              const distinctReason = distinctReasonByPair[pairKey] || '';
-                              const reasonInputId = `distinct-reason-${pairKey}`;
-                              const canApproveMerge =
-                                !actionBusy &&
-                                targetLoaded &&
-                                (combinedRecordings.length === 0 || Boolean(chosenDefaultId));
-                              const canKeepDistinct = !actionBusy && Boolean(distinctReason.trim());
+                        for (const rec of targetDoc?.recordings ?? []) {
+                          const k = recDedupKey(rec);
+                          if (!combinedMap.has(k)) {
+                            combinedMap.set(k, { rec, origin: 'Keep Target' });
+                          }
+                        }
+                        for (const rec of selectedCurationItem.recordings ?? []) {
+                          const k = recDedupKey(rec);
+                          const existing = combinedMap.get(k);
+                          if (!existing) {
+                            combinedMap.set(k, { rec, origin: 'Incoming Duplicate' });
+                          } else if (existing.origin === 'Keep Target') {
+                            existing.origin = 'Keep Target & Incoming (Shared)';
+                          }
+                        }
+                        const combinedRecordings = Array.from(combinedMap.values());
+                        const chosenDefaultId = selectedDefaultRecByPair[pairKey] || '';
+                        const distinctReason = distinctReasonByPair[pairKey] || '';
+                        const reasonInputId = `distinct-reason-${pairKey}`;
+                        const canApproveMerge =
+                          !actionBusy &&
+                          targetLoaded &&
+                          (combinedRecordings.length === 0 || Boolean(chosenDefaultId));
+                        const canKeepDistinct = !actionBusy && Boolean(distinctReason.trim());
+                        const targetLines = targetDoc?.lyricsSets?.[0]?.lines ?? [];
+                        const sourceLines = selectedCurationItem.lyricsSets?.[0]?.lines ?? [];
 
-                              return (
-                                <div
-                                  key={cand.targetBhajanId}
-                                  className="merge-candidate-card"
-                                >
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      flexWrap: 'wrap',
-                                      justifyContent: 'space-between',
-                                      alignItems: 'center',
-                                      gap: '0.5rem',
+                        return (
+                          <div style={{ marginBottom: '1rem' }}>
+                            <div className="control-label">
+                              Duplicate Resolution ({candidateList.length > 1 ? `${candidateList.length} candidate options` : '1 canonical target'})
+                            </div>
+
+                            <div className="merge-candidate-card">
+                              {candidateList.length > 1 && (
+                                <div className="merge-candidate-tabs" role="group" aria-label="Choose candidate target bhajan">
+                                  {candidateList.map((opt, idx) => (
+                                    <button
+                                      key={opt.targetBhajanId}
+                                      type="button"
+                                      className={`btn btn-sm ${idx === safeCandidateIdx ? 'btn-primary' : ''}`}
+                                      aria-pressed={idx === safeCandidateIdx}
+                                      onClick={() => setSelectedCandidateIdx(idx)}
+                                    >
+                                      Option {idx + 1}: {opt.targetTitle} ({(opt.score * 100).toFixed(0)}%)
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexWrap: 'wrap',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '0.5rem',
+                                }}
+                              >
+                                <div>
+                                  <strong>{cand.targetTitle}</strong>{' '}
+                                  <code style={{ fontSize: '0.78rem' }}>{cand.targetBhajanId}</code> (
+                                  {(cand.score * 100).toFixed(1)}% · {cand.reason})
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-success"
+                                    disabled={!canApproveMerge}
+                                    title={
+                                      combinedRecordings.length > 0 && !chosenDefaultId
+                                        ? 'Select a Default Version below before approving merge'
+                                        : undefined
+                                    }
+                                    onClick={() =>
+                                      handleCurationAction(
+                                        {
+                                          action: 'approve_merge',
+                                          sourceBhajanId: selectedCurationItem.id,
+                                          targetBhajanId: cand.targetBhajanId,
+                                          defaultRecordingId: chosenDefaultId || undefined,
+                                          videoId:
+                                            selectedCurationItem.recordings[0]?.youtubeVideoId,
+                                          saveAliasTitle: selectedCurationItem.title,
+                                          lyricsText: curatedLyricsText,
+                                          script: curatedScript,
+                                          metadata: curatedMeta,
+                                        },
+                                        `Merged "${selectedCurationItem.title}" into "${cand.targetTitle}" and saved alias.`,
+                                      )
+                                    }
+                                  >
+                                    Approve Merge &amp; Save Alias
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm"
+                                    disabled={!canKeepDistinct}
+                                    title={
+                                      !distinctReason.trim()
+                                        ? 'Explain what makes these two bhajans different below before marking Keep Distinct'
+                                        : undefined
+                                    }
+                                    onClick={() => {
+                                      const noteText = distinctReason.trim();
+                                      void handleCurationAction(
+                                        {
+                                          action: 'keep_distinct',
+                                          sourceBhajanId: selectedCurationItem.id,
+                                          candidateBhajanId: cand.targetBhajanId,
+                                          note: noteText,
+                                        },
+                                        `Recorded "${selectedCurationItem.title}" != "${cand.targetTitle}" in doNotMergePairs and clearance log.`,
+                                      ).then((ok) => {
+                                        if (!ok) return;
+                                        setDistinctReasonByPair((prev) => {
+                                          const next = { ...prev };
+                                          delete next[pairKey];
+                                          return next;
+                                        });
+                                      });
                                     }}
                                   >
-                                    <div>
-                                      <strong>{cand.targetTitle}</strong>{' '}
-                                      <code style={{ fontSize: '0.78rem' }}>{cand.targetBhajanId}</code> (
-                                      {(cand.score * 100).toFixed(1)}% · {cand.reason})
-                                      {targetDoc ? (
-                                        <div className="field-hint" style={{ margin: '0.15rem 0 0' }}>
-                                          Target ({targetDoc.metadataSource}): {[
-                                            targetDoc.deity,
-                                            targetDoc.raga?.name,
-                                            `${targetDoc.lyricsSets?.[0]?.lines?.length ?? 0} lyrics lines`,
-                                            `${targetDoc.recordings?.length ?? 0} media`,
-                                          ]
-                                            .filter(Boolean)
-                                            .join(' · ')}{' '}
-                                          | Source ({selectedCurationItem.metadataSource}):{' '}
-                                          {`${selectedCurationItem.lyricsSets?.[0]?.lines?.length ?? 0} lyrics lines · ${selectedCurationItem.recordings?.length ?? 0} media`}
-                                        </div>
-                                      ) : !targetLoaded ? (
-                                        <div className="field-hint" style={{ margin: '0.15rem 0 0' }}>
-                                          Loading target versions for merge comparison…
-                                        </div>
-                                      ) : (
-                                        <div className="field-hint" style={{ margin: '0.15rem 0 0', color: 'var(--danger)' }}>
-                                          Target bhajan could not be loaded (it may already have been merged or removed).
-                                        </div>
-                                      )}
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-success"
-                                        disabled={!canApproveMerge}
-                                        title={
-                                          combinedRecordings.length > 0 && !chosenDefaultId
-                                            ? 'Select a Default Version below before approving merge'
-                                            : undefined
-                                        }
-                                        onClick={() =>
-                                          handleCurationAction(
-                                            {
-                                              action: 'approve_merge',
-                                              sourceBhajanId: selectedCurationItem.id,
-                                              targetBhajanId: cand.targetBhajanId,
-                                              defaultRecordingId: chosenDefaultId || undefined,
-                                              videoId:
-                                                selectedCurationItem.recordings[0]?.youtubeVideoId,
-                                              saveAliasTitle: selectedCurationItem.title,
-                                            },
-                                            `Merged "${selectedCurationItem.title}" into "${cand.targetTitle}" and saved alias.`,
-                                          )
-                                        }
-                                      >
-                                        Approve Merge &amp; Save Alias
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm"
-                                        disabled={!canKeepDistinct}
-                                        title={
-                                          !distinctReason.trim()
-                                            ? 'Explain what makes these two bhajans different below before marking Keep Distinct'
-                                            : undefined
-                                        }
-                                        onClick={() => {
-                                          const noteText = distinctReason.trim();
-                                          void handleCurationAction(
-                                            {
-                                              action: 'keep_distinct',
-                                              sourceBhajanId: selectedCurationItem.id,
-                                              candidateBhajanId: cand.targetBhajanId,
-                                              note: noteText,
-                                            },
-                                            `Recorded "${selectedCurationItem.title}" != "${cand.targetTitle}" in doNotMergePairs and clearance log.`,
-                                          ).then((ok) => {
-                                            if (!ok) return;
-                                            setDistinctReasonByPair((prev) => {
-                                              const next = { ...prev };
-                                              delete next[pairKey];
-                                              return next;
-                                            });
-                                          });
-                                        }}
-                                      >
-                                        Keep Distinct
-                                      </button>
-                                    </div>
-                                  </div>
+                                    Keep Distinct
+                                  </button>
+                                </div>
+                              </div>
 
-                                  <div className="distinct-reason-box">
-                                    <label htmlFor={reasonInputId} className="distinct-reason-label">
-                                      Not the same bhajan? Explain the difference (required to Keep Distinct; logged for proximity learning):
-                                    </label>
-                                    <div className="distinct-reason-chips">
-                                      {QUICK_DISTINCT_REASONS.map((preset) => (
-                                        <button
-                                          key={preset}
-                                          type="button"
-                                          className="distinct-reason-chip"
-                                          onClick={() =>
-                                            setDistinctReasonByPair((prev) => ({
-                                              ...prev,
-                                              [pairKey]: preset,
-                                            }))
-                                          }
-                                        >
-                                          {preset}
-                                        </button>
-                                      ))}
-                                    </div>
-                                    <textarea
-                                      id={reasonInputId}
-                                      rows={2}
-                                      maxLength={500}
-                                      className="textarea-control"
-                                      placeholder="e.g., Same first line 'Subrahmanyam' but completely different middle stanzas and Mohanam tune..."
-                                      value={distinctReason}
-                                      onChange={(e) =>
-                                        setDistinctReasonByPair((prev) => ({
-                                          ...prev,
-                                          [pairKey]: e.target.value,
-                                        }))
-                                      }
-                                    />
-                                    <div className="field-hint" style={{ margin: 0, textAlign: 'right' }}>
-                                      {distinctReason.trim().length}/500
-                                    </div>
+                              <div className="merge-compare-grid">
+                                <div className="merge-compare-col">
+                                  <div className="merge-compare-heading">
+                                    <span>Keep Target</span>
+                                    <span className="badge badge-verified">
+                                      {targetDoc?.metadataSource || 'loading'}
+                                    </span>
                                   </div>
-
                                   {!targetLoaded ? (
                                     <p className="field-hint" style={{ margin: 0 }}>
-                                      Fetching target audio/video versions…
+                                      Loading target details &amp; lyrics…
                                     </p>
-                                  ) : combinedRecordings.length > 0 && (
-                                    <fieldset className="merge-default-fieldset">
-                                      <legend className="merge-default-legend">
-                                        Select Default Version for Stream (Required) — all other recordings remain available under More Versions
-                                      </legend>
-                                      <div className="merge-default-list">
-                                        {combinedRecordings.map(({ rec, origin }) => {
-                                          const radioId = `merge-def-${pairKey}-${rec.id}`;
-                                          const isYt = Boolean(rec.youtubeVideoId);
-                                          const durMin =
-                                            typeof rec.durationSec === 'number' && rec.durationSec > 0
-                                              ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, '0')}`
-                                              : null;
-                                          return (
-                                            <div key={rec.id} className="merge-default-row">
-                                              <label htmlFor={radioId} className="merge-default-option">
-                                                <input
-                                                  id={radioId}
-                                                  type="radio"
-                                                  className="brand-radio"
-                                                  name={`default-rec-${pairKey}`}
-                                                  value={rec.id}
-                                                  checked={chosenDefaultId === rec.id}
-                                                  onChange={() =>
-                                                    setSelectedDefaultRecByPair((prev) => ({
-                                                      ...prev,
-                                                      [pairKey]: rec.id,
-                                                    }))
-                                                  }
-                                                />
-                                                <span className="merge-default-label-text">
-                                                  <strong>{rec.label || rec.id}</strong>{' '}
-                                                  <span className="badge">
-                                                    {isYt ? 'YouTube Video' : 'Audio MP3'}
-                                                  </span>{' '}
-                                                  <span className="badge badge-pending">{origin}</span>
-                                                  {durMin ? (
-                                                    <span className="field-hint"> · {durMin}</span>
-                                                  ) : null}
-                                                </span>
-                                              </label>
-                                              <div className="merge-default-preview">
-                                                {!isYt && rec.externalUrl ? (
-                                                  <audio
-                                                    controls
-                                                    preload="none"
-                                                    src={rec.externalUrl}
-                                                    style={{ height: '30px', maxWidth: '240px' }}
-                                                  />
-                                                ) : rec.youtubeVideoId ? (
-                                                  <a
-                                                    href={
-                                                      rec.externalUrl ||
-                                                      `https://www.youtube.com/watch?v=${rec.youtubeVideoId}`
-                                                    }
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    className="btn btn-sm"
-                                                  >
-                                                    Watch Video ↗
-                                                  </a>
-                                                ) : null}
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
+                                  ) : !targetDoc ? (
+                                    <p className="field-hint" style={{ margin: 0, color: 'var(--danger)' }}>
+                                      Target bhajan could not be loaded (it may already have been merged or removed).
+                                    </p>
+                                  ) : (
+                                    <>
+                                      <div className="field-hint" style={{ margin: 0 }}>
+                                        <strong>{targetDoc.title}</strong> ·{' '}
+                                        {[
+                                          targetDoc.deity && `Deity: ${targetDoc.deity}`,
+                                          targetDoc.raga?.name && `Raga: ${targetDoc.raga.name}`,
+                                          (targetDoc.beat || targetDoc.tala) &&
+                                            `Beat: ${targetDoc.beat || targetDoc.tala}`,
+                                          targetDoc.gentsPitchRaw && `Gents: ${targetDoc.gentsPitchRaw}`,
+                                        ]
+                                          .filter(Boolean)
+                                          .join(' · ') || 'No metadata yet'}
                                       </div>
-                                    </fieldset>
+                                      <div className="merge-lyrics-preview">
+                                        {targetLines.length > 0 ? (
+                                          targetLines.map((ln, i) => (
+                                            <div key={`t-ln-${i}`}>{ln}</div>
+                                          ))
+                                        ) : (
+                                          <span className="field-hint">
+                                            No lyrics on target yet — add them below before merging.
+                                          </span>
+                                        )}
+                                      </div>
+                                    </>
                                   )}
                                 </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
 
+                                <div className="merge-compare-col">
+                                  <div className="merge-compare-heading">
+                                    <span>Incoming Duplicate</span>
+                                    <span className="badge">{selectedCurationItem.metadataSource}</span>
+                                  </div>
+                                  <div className="field-hint" style={{ margin: 0 }}>
+                                    <strong>{selectedCurationItem.title}</strong> ·{' '}
+                                    {[
+                                      selectedCurationItem.deity &&
+                                        `Deity: ${selectedCurationItem.deity}`,
+                                      selectedCurationItem.raga?.name &&
+                                        `Raga: ${selectedCurationItem.raga.name}`,
+                                      (selectedCurationItem.beat || selectedCurationItem.tala) &&
+                                        `Beat: ${selectedCurationItem.beat || selectedCurationItem.tala}`,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' · ') || 'No metadata yet'}
+                                  </div>
+                                  <div className="merge-lyrics-preview">
+                                    {sourceLines.length > 0 ? (
+                                      sourceLines.map((ln, i) => (
+                                        <div key={`s-ln-${i}`}>{ln}</div>
+                                      ))
+                                    ) : (
+                                      <span className="field-hint">
+                                        No lyrics on incoming stub
+                                        {targetLines.length > 0
+                                          ? ' — Target lyrics will be kept automatically.'
+                                          : ' — edit below before approving or publishing.'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {!targetLoaded ? (
+                                <p className="field-hint" style={{ margin: 0 }}>
+                                  Fetching target audio/video versions…
+                                </p>
+                              ) : (
+                                combinedRecordings.length > 0 && (
+                                  <fieldset className="merge-default-fieldset">
+                                    <legend className="merge-default-legend">
+                                      Select Default Version for Stream (Required) — all other recordings remain available under More Versions
+                                    </legend>
+                                    <div className="merge-default-list">
+                                      {combinedRecordings.map(({ rec, origin }) => {
+                                        const radioId = `merge-def-${pairKey}-${rec.id}`;
+                                        const isYt = Boolean(rec.youtubeVideoId);
+                                        const durMin =
+                                          typeof rec.durationSec === 'number' && rec.durationSec > 0
+                                            ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, '0')}`
+                                            : null;
+                                        return (
+                                          <div key={rec.id} className="merge-default-row">
+                                            <label htmlFor={radioId} className="merge-default-option">
+                                              <input
+                                                id={radioId}
+                                                type="radio"
+                                                className="brand-radio"
+                                                name={`default-rec-${pairKey}`}
+                                                value={rec.id}
+                                                checked={chosenDefaultId === rec.id}
+                                                onChange={() =>
+                                                  setSelectedDefaultRecByPair((prev) => ({
+                                                    ...prev,
+                                                    [pairKey]: rec.id,
+                                                  }))
+                                                }
+                                              />
+                                              <span className="merge-default-label-text">
+                                                <strong>{rec.label || rec.id}</strong>{' '}
+                                                <span className="badge">
+                                                  {isYt ? 'YouTube Video' : 'Audio MP3'}
+                                                </span>{' '}
+                                                <span className="badge badge-pending">{origin}</span>
+                                                {durMin ? (
+                                                  <span className="field-hint"> · {durMin}</span>
+                                                ) : null}
+                                              </span>
+                                            </label>
+                                            <div className="merge-default-preview">
+                                              {!isYt && rec.externalUrl ? (
+                                                <audio
+                                                  controls
+                                                  preload="none"
+                                                  src={rec.externalUrl}
+                                                  style={{ height: '30px', maxWidth: '240px' }}
+                                                />
+                                              ) : rec.youtubeVideoId ? (
+                                                <a
+                                                  href={
+                                                    rec.externalUrl ||
+                                                    `https://www.youtube.com/watch?v=${rec.youtubeVideoId}`
+                                                  }
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  className="btn btn-sm"
+                                                >
+                                                  Watch Video ↗
+                                                </a>
+                                              ) : null}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </fieldset>
+                                )
+                              )}
+
+                              <div className="distinct-reason-box">
+                                <label htmlFor={reasonInputId} className="distinct-reason-label">
+                                  Not the same bhajan? Explain the difference (required to Keep Distinct; logged for proximity learning):
+                                </label>
+                                <div className="distinct-reason-chips">
+                                  {QUICK_DISTINCT_REASONS.map((preset) => (
+                                    <button
+                                      key={preset}
+                                      type="button"
+                                      className="distinct-reason-chip"
+                                      onClick={() =>
+                                        setDistinctReasonByPair((prev) => ({
+                                          ...prev,
+                                          [pairKey]: preset,
+                                        }))
+                                      }
+                                    >
+                                      {preset}
+                                    </button>
+                                  ))}
+                                </div>
+                                <textarea
+                                  id={reasonInputId}
+                                  rows={2}
+                                  maxLength={500}
+                                  className="textarea-control"
+                                  placeholder="e.g., Same first line 'Subrahmanyam' but completely different middle stanzas and Mohanam tune..."
+                                  value={distinctReason}
+                                  onChange={(e) =>
+                                    setDistinctReasonByPair((prev) => ({
+                                      ...prev,
+                                      [pairKey]: e.target.value,
+                                    }))
+                                  }
+                                />
+                                <div className="field-hint" style={{ margin: 0, textAlign: 'right' }}>
+                                  {distinctReason.trim().length}/500
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="control-label" style={{ marginBottom: '0.45rem' }}>
+                        Merged Record Metadata &amp; Lyrics (pre-filled from Target; edits are saved on Approve Merge or Publish Curated)
+                      </div>
                       <div className="pitch-grid" style={{ marginBottom: '0.75rem' }}>
                         <div className="form-field">
                           <label htmlFor="curate-deity">Deity</label>
@@ -1564,9 +1696,10 @@ export function AdminModerationClient({
                             type="text"
                             className="input-control"
                             value={curatedMeta.deity || ''}
-                            onChange={(e) =>
-                              setCuratedMeta((m) => ({ ...m, deity: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              setCurationFormDirty(true);
+                              setCuratedMeta((m) => ({ ...m, deity: e.target.value }));
+                            }}
                           />
                         </div>
                         <div className="form-field">
@@ -1576,9 +1709,10 @@ export function AdminModerationClient({
                             type="text"
                             className="input-control"
                             value={curatedMeta.ragaName || ''}
-                            onChange={(e) =>
-                              setCuratedMeta((m) => ({ ...m, ragaName: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              setCurationFormDirty(true);
+                              setCuratedMeta((m) => ({ ...m, ragaName: e.target.value }));
+                            }}
                           />
                         </div>
                         <div className="form-field">
@@ -1588,9 +1722,10 @@ export function AdminModerationClient({
                             type="text"
                             className="input-control"
                             value={curatedMeta.beat || ''}
-                            onChange={(e) =>
-                              setCuratedMeta((m) => ({ ...m, beat: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              setCurationFormDirty(true);
+                              setCuratedMeta((m) => ({ ...m, beat: e.target.value }));
+                            }}
                           />
                         </div>
                         <div className="form-field">
@@ -1600,9 +1735,10 @@ export function AdminModerationClient({
                             type="text"
                             className="input-control"
                             value={curatedMeta.gentsPitchRaw || ''}
-                            onChange={(e) =>
-                              setCuratedMeta((m) => ({ ...m, gentsPitchRaw: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              setCurationFormDirty(true);
+                              setCuratedMeta((m) => ({ ...m, gentsPitchRaw: e.target.value }));
+                            }}
                           />
                         </div>
                         <div className="form-field">
@@ -1612,9 +1748,10 @@ export function AdminModerationClient({
                             type="text"
                             className="input-control"
                             value={curatedMeta.ladiesPitchRaw || ''}
-                            onChange={(e) =>
-                              setCuratedMeta((m) => ({ ...m, ladiesPitchRaw: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              setCurationFormDirty(true);
+                              setCuratedMeta((m) => ({ ...m, ladiesPitchRaw: e.target.value }));
+                            }}
                           />
                         </div>
                         <div className="form-field">
@@ -1624,9 +1761,10 @@ export function AdminModerationClient({
                             type="text"
                             className="input-control"
                             value={curatedMeta.arohanam || ''}
-                            onChange={(e) =>
-                              setCuratedMeta((m) => ({ ...m, arohanam: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              setCurationFormDirty(true);
+                              setCuratedMeta((m) => ({ ...m, arohanam: e.target.value }));
+                            }}
                           />
                         </div>
                       </div>
@@ -1638,7 +1776,10 @@ export function AdminModerationClient({
                           rows={5}
                           className="textarea-control"
                           value={curatedLyricsText}
-                          onChange={(e) => setCuratedLyricsText(e.target.value)}
+                          onChange={(e) => {
+                            setCurationFormDirty(true);
+                            setCuratedLyricsText(e.target.value);
+                          }}
                         />
                       </div>
 

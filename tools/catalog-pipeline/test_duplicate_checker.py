@@ -155,6 +155,47 @@ class DuplicateCheckerTests(unittest.TestCase):
         self.assertGreaterEqual(report["skippedDoNotMerge"], 1)
         self.assertGreaterEqual(report["skippedAliased"], 1)
 
+    def test_cluster_collapse_points_all_cluster_members_to_single_canonical_root(self) -> None:
+        lyrics = [
+            "Durga Bhavani Ma Jaya Jaya Sai Ma",
+            "Kali Kapalini Ma Jaya Jaya Sai Ma",
+            "Parama Shivani Ma Jaya Jaya Sai Ma",
+            "Jagadoddharini Ma Jaya Jaya Sai Ma",
+        ]
+        docs = [
+            _make_doc(
+                "durga-bhavani-ma-jaya-jaya",
+                "Durga Bhavani Ma Jaya Jaya",
+                metadata_source="sairhythms_verified",
+                lines=lyrics,
+                recordings=[{"id": "sair_1", "collection": "sairhythms_ref", "externalUrl": "https://sair/1.mp3"}],
+            ),
+            _make_doc(
+                "durga-sssmc",
+                "Durga Bhavani Ma Jaya Jaya Sai Ma",
+                metadata_source="sssmediacentre_verified",
+                lines=lyrics,
+                recordings=[{"id": "sssmc_1", "collection": "sssmediacentre_bhajan_a_day", "externalUrl": "https://sssmc/1.mp3"}],
+            ),
+            _make_doc(
+                "yt_stub_empty",
+                "Durga Bhavani Ma Jaya Jaya Sai Ma",
+                metadata_source="youtube_sss_bhajans",
+                lines=[],
+                recordings=[{"id": "yt_1", "youtubeVideoId": "vid1"}],
+            ),
+        ]
+
+        report = dc.scan_catalog_duplicates(docs, min_score=0.78)
+        by_src = {}
+        for p in report["pairs"]:
+            by_src.setdefault(p["sourceId"], []).append(p["targetId"])
+
+        # Both SSSMC and the YouTube stub collapse onto the single Sai Rhythms canonical target
+        self.assertEqual(by_src.get("durga-sssmc"), ["durga-bhavani-ma-jaya-jaya"])
+        self.assertEqual(by_src.get("yt_stub_empty"), ["durga-bhavani-ma-jaya-jaya"])
+        self.assertEqual(report["flaggedPairs"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

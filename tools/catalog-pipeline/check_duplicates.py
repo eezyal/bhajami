@@ -215,6 +215,11 @@ def prepare_bhajan(doc: Mapping[str, Any]) -> PreparedBhajan | None:
 
     aliases = frozenset(str(a).strip() for a in (doc.get("slugAliases") or []) if str(a).strip())
     rec_keys = frozenset(_extract_recording_keys(doc))
+    rec_labels = " ".join(
+        str(r.get("label") or "")
+        for r in (list(doc.get("recordings") or []) + list(doc.get("addedRecordings") or []))
+        if isinstance(r, Mapping)
+    )
     dnm_with = frozenset(str(x).strip() for x in (doc.get("doNotMergeWith") or []) if str(x).strip())
 
     return PreparedBhajan(
@@ -232,7 +237,7 @@ def prepare_bhajan(doc: Mapping[str, Any]) -> PreparedBhajan | None:
         lyrics_full_4grams=lyrics_full_4grams,
         lyrics_tokens=frozenset(lyrics_tokens_set),
         body_tokens=frozenset(body_tokens_set),
-        is_instrumental=sssmc._is_instrumental_text(raw_title),  # noqa: SLF001
+        is_instrumental=sssmc._is_instrumental_text(f"{raw_title} {rec_labels}"),  # noqa: SLF001
         slug_aliases=aliases,
         recording_keys=rec_keys,
         do_not_merge_with=dnm_with,
@@ -535,6 +540,122 @@ def evaluate_duplicate_pair(
     }
 
 
+def collapse_duplicate_clusters(
+    prepared_by_id: Mapping[str, PreparedBhajan],
+    pairs: Sequence[Mapping[str, Any]],
+    *,
+    vetoed_pair_keys: set[tuple[str, str]] | frozenset[tuple[str, str]] = frozenset(),
+    do_not_merge_set: set[str] | frozenset[str] = frozenset(),
+    min_score: float = DEFAULT_MIN_SCORE,
+) -> list[dict[str, Any]]:
+    """Collapse pairwise duplicate clusters so each duplicate source points to one canonical root.
+
+    Distinct competing targets that were vetoed against each other (different lyrics or doNotMergePairs)
+    remain separate candidates so Admin can choose the right one.
+    """
+    pair_map: dict[tuple[str, str], dict[str, Any]] = {}
+    by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for raw_pair in pairs:
+        p = dict(raw_pair)
+        src_id = str(p["sourceId"])
+        tgt_id = str(p["targetId"])
+        uk = (src_id, tgt_id) if src_id <= tgt_id else (tgt_id, src_id)
+        prev = pair_map.get(uk)
+        if prev is None or float(p["score"]) > float(prev["score"]):
+            pair_map[uk] = p
+        by_source[src_id].append(p)
+
+    def _priority_rank(doc_id: str) -> tuple[Any, ...]:
+        pb = prepared_by_id.get(doc_id)
+        if pb is None:
+            return (0, 0, 0, 0, 0, 0, 0, doc_id)
+        pk = target_priority_key(pb.doc)
+        return (*pk[:-1], doc_id)
+
+    def _better_target_key(doc_id: str) -> tuple[Any, ...]:
+        pr = _priority_rank(doc_id)
+        return (tuple(-int(v) for v in pr[:-1]), str(pr[-1]))
+
+    # Best highest-priority direct parent for each source node
+    best_parent: dict[str, str] = {}
+    for src_id, cands in by_source.items():
+        cands_sorted = sorted(
+            cands,
+            key=lambda item: (_better_target_key(str(item["targetId"])), -float(item["score"])),
+        )
+        best_parent[src_id] = str(cands_sorted[0]["targetId"])
+
+    def _is_blocked_pair(id_a: str, id_b: str) -> bool:
+        uk = (id_a, id_b) if id_a <= id_b else (id_b, id_a)
+        if uk in vetoed_pair_keys:
+            return True
+        if phonetics.make_do_not_merge_key(id_a, id_b) in do_not_merge_set:
+            return True
+        return False
+
+    redirected_by_source: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for src_id, cands in by_source.items():
+        for p in cands:
+            cur_tgt = str(p["targetId"])
+            visited = {src_id, cur_tgt}
+            resolved_pair = p
+
+            while cur_tgt in best_parent:
+                nxt = best_parent[cur_tgt]
+                if nxt in visited or _is_blocked_pair(src_id, nxt):
+                    break
+                uk_nxt = (src_id, nxt) if src_id <= nxt else (nxt, src_id)
+                direct_or_eval = pair_map.get(uk_nxt)
+                if direct_or_eval is None:
+                    pa = prepared_by_id.get(src_id)
+                    pb = prepared_by_id.get(nxt)
+                    if pa is None or pb is None:
+                        break
+                    ev = evaluate_duplicate_pair(
+                        pa,
+                        pb,
+                        do_not_merge_set=do_not_merge_set,
+                        min_score=min_score,
+                    )
+                    if ev.get("status") != "flagged":
+                        break
+                    direct_or_eval = ev
+                # Verify nxt actually wins target direction over src_id
+                if str(direct_or_eval["targetId"]) != nxt:
+                    break
+                visited.add(nxt)
+                cur_tgt = nxt
+                resolved_pair = direct_or_eval
+
+            final_tgt = str(resolved_pair["targetId"])
+            prev = redirected_by_source[src_id].get(final_tgt)
+            if prev is None or float(resolved_pair["score"]) > float(prev["score"]):
+                redirected_by_source[src_id][final_tgt] = dict(resolved_pair)
+
+    collapsed: list[dict[str, Any]] = []
+    for src_id, tgt_dict in redirected_by_source.items():
+        cands_sorted = sorted(
+            tgt_dict.values(),
+            key=lambda item: (_better_target_key(str(item["targetId"])), -float(item["score"])),
+        )
+        kept: list[dict[str, Any]] = []
+        for cand in cands_sorted:
+            cand_tid = str(cand["targetId"])
+            # Prune candidate if it is itself a flagged duplicate of an already-kept canonical target
+            redundant = False
+            for already in kept:
+                ak_id = str(already["targetId"])
+                uk = (cand_tid, ak_id) if cand_tid <= ak_id else (ak_id, cand_tid)
+                if uk in pair_map:
+                    redundant = True
+                    break
+            if not redundant:
+                kept.append(cand)
+        collapsed.extend(kept)
+
+    return collapsed
+
+
 def scan_catalog_duplicates(
     docs: Sequence[Mapping[str, Any]],
     *,
@@ -544,15 +665,18 @@ def scan_catalog_duplicates(
 ) -> dict[str, Any]:
     """Scan all bhajan documents and return sorted candidate duplicate pairs for Admin Review."""
     prepared: list[PreparedBhajan] = []
+    prepared_by_id: dict[str, PreparedBhajan] = {}
     for doc in docs:
         prep = prepare_bhajan(doc)
         if prep is not None:
             prepared.append(prep)
+            prepared_by_id[prep.doc_id] = prep
 
     dnm_set = {str(p).strip() for p in do_not_merge_pairs if str(p).strip()}
     candidate_indices = _build_candidate_pairs(prepared)
 
     flagged: list[dict[str, Any]] = []
+    vetoed_pair_keys: set[tuple[str, str]] = set()
     vetoed_different_lyrics = 0
     skipped_do_not_merge = 0
     skipped_aliased = 0
@@ -569,6 +693,8 @@ def scan_catalog_duplicates(
             flagged.append(res)
         elif status == "vetoed":
             vetoed_different_lyrics += 1
+            id_a, id_b = prepared[ia].doc_id, prepared[ib].doc_id
+            vetoed_pair_keys.add((id_a, id_b) if id_a <= id_b else (id_b, id_a))
         elif status == "skip":
             reason = res.get("reason")
             if reason == "do_not_merge":
@@ -576,7 +702,15 @@ def scan_catalog_duplicates(
             elif reason == "already_aliased":
                 skipped_aliased += 1
 
-    flagged.sort(
+    collapsed = collapse_duplicate_clusters(
+        prepared_by_id,
+        flagged,
+        vetoed_pair_keys=vetoed_pair_keys,
+        do_not_merge_set=dnm_set,
+        min_score=min_score,
+    )
+
+    collapsed.sort(
         key=lambda item: (
             -float(item["score"]),
             int(item["charEditDistance"]),
@@ -584,12 +718,13 @@ def scan_catalog_duplicates(
             str(item["targetId"]),
         )
     )
-    limited = flagged[:max_candidates] if max_candidates > 0 else flagged
+    limited = collapsed[:max_candidates] if max_candidates > 0 else collapsed
 
     return {
         "scannedBhajans": len(prepared),
         "candidatePairsEvaluated": len(candidate_indices),
-        "totalFlaggedBeforeLimit": len(flagged),
+        "rawPairsBeforeClusterCollapse": len(flagged),
+        "totalFlaggedBeforeLimit": len(collapsed),
         "flaggedPairs": len(limited),
         "vetoedDifferentLyrics": vetoed_different_lyrics,
         "skippedDoNotMerge": skipped_do_not_merge,
@@ -656,20 +791,6 @@ def publish_duplicate_candidates_to_firestore(
         if writes >= max_writes - 1:
             break
         existing_doc = docs_by_id[src_id]
-        merged_by_target: dict[str, dict[str, Any]] = {}
-        for old_c in existing_doc.get("matchCandidates") or []:
-            if isinstance(old_c, Mapping) and old_c.get("targetBhajanId"):
-                merged_by_target[str(old_c["targetBhajanId"])] = {
-                    "targetBhajanId": str(old_c["targetBhajanId"]),
-                    "targetTitle": str(old_c.get("targetTitle") or old_c["targetBhajanId"]),
-                    "score": float(old_c.get("score") or 0.0),
-                    "reason": str(old_c.get("reason") or "prior_candidate"),
-                }
-        for c in new_cands:
-            tid = str(c["targetBhajanId"])
-            prev = merged_by_target.get(tid)
-            if prev is None or float(c["score"]) >= float(prev.get("score") or 0.0):
-                merged_by_target[tid] = c
 
         def _cand_sort_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
             tid = str(item["targetBhajanId"])
@@ -679,9 +800,15 @@ def publish_duplicate_candidates_to_firestore(
                 return (-float(item["score"]), tuple(-int(v) for v in pk[:-1]), str(pk[-1]))
             return (-float(item["score"]), (0,), tid)
 
-        top_cands = sorted(merged_by_target.values(), key=_cand_sort_key)[:5]
+        # Deduplicate and replace with cluster-collapsed canonical candidates (removing stale back-links)
+        deduped: dict[str, dict[str, Any]] = {}
+        for c in new_cands:
+            tid = str(c["targetBhajanId"])
+            prev = deduped.get(tid)
+            if prev is None or float(c["score"]) >= float(prev.get("score") or 0.0):
+                deduped[tid] = c
+        top_cands = sorted(deduped.values(), key=_cand_sort_key)[:5]
 
-        # Skip redundant write if status and candidate IDs+scores already match
         existing_top = [
             (str(c.get("targetBhajanId")), round(float(c.get("score") or 0.0), 4))
             for c in (existing_doc.get("matchCandidates") or [])
@@ -705,6 +832,30 @@ def publish_duplicate_candidates_to_firestore(
         batch_ops += 1
         writes += 1
         queued_sources += 1
+        if batch_ops >= 400:
+            batch.commit()
+            batch = fs_client.batch()
+            batch_ops = 0
+
+    # Clean stale needs_verification docs that are now canonical roots or no longer flagged
+    for doc_id, doc in docs_by_id.items():
+        if writes >= max_writes - 1:
+            break
+        if doc_id in by_source or doc.get("matchStatus") != "needs_verification":
+            continue
+        has_lyrics = bool(sssmc._extract_roman_lines(doc)) and not bool(doc.get("lyricsMissing"))  # noqa: SLF001
+        reset_status = "verified" if has_lyrics else "unmatched"
+        batch.set(
+            fs_client.collection("bhajans").document(doc_id),
+            {
+                "matchStatus": reset_status,
+                "matchCandidates": [],
+                "updatedAt": sssmc.utc_now_iso(),
+            },
+            merge=True,
+        )
+        batch_ops += 1
+        writes += 1
         if batch_ops >= 400:
             batch.commit()
             batch = fs_client.batch()

@@ -169,8 +169,8 @@ jobs:
               --source firestore \
               --publish-firestore \
               --min-score 0.78 \
-              --max-candidates 200 \
-              --max-firestore-writes 500
+              --max-candidates 400 \
+              --max-firestore-writes 800
           else
             echo "Duplicate checker skipped (run_duplicate_check=false)."
           fi

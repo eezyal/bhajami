@@ -336,6 +336,13 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
         targetBhajanId: 'sundara-sundara-vinayaka',
         defaultRecordingId: 'yt_doubtMerge2',
         saveAliasTitle: 'Sundara Vinaayaka Live',
+        lyricsText: 'Sundara Sundara Vinayaka\nMangala Dayaka Vinayaka',
+        script: 'Roman',
+        metadata: {
+          deity: 'Ganesha',
+          ragaName: 'Hamsadhwani',
+          beat: '8 Beat / Keherwa',
+        },
       }),
     });
     assert.equal(mergeRes.status, 200);
@@ -345,12 +352,18 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
         defaultRecordingId?: string | null;
         recordings: Array<{ id: string; isDefault?: boolean }>;
         slugAliases?: string[];
+        raga?: { name?: string };
+        beat?: string | null;
+        lyricsSets?: Array<{ lines: string[] }>;
       };
     };
     assert.ok(mergeJson.aliasId);
     assert.equal(mergeJson.bhajan.defaultRecordingId, 'yt_doubtMerge2');
     assert.equal(mergeJson.bhajan.recordings[0].id, 'yt_doubtMerge2');
     assert.equal(mergeJson.bhajan.recordings[0].isDefault, true);
+    assert.equal(mergeJson.bhajan.raga?.name, 'Hamsadhwani');
+    assert.equal(mergeJson.bhajan.beat, '8 Beat / Keherwa');
+    assert.equal(mergeJson.bhajan.lyricsSets?.[0]?.lines[0], 'Sundara Sundara Vinayaka');
     assert.ok(mergeJson.bhajan.recordings.some((r) => r.id === 'yt_doubtMerge2'));
     assert.ok(mergeJson.bhajan.recordings.slice(1).every((r) => !r.isDefault));
     assert.ok(mergeJson.bhajan.slugAliases?.includes('yt_doubtMerge2'));
