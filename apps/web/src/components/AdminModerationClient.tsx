@@ -88,7 +88,13 @@ export function AdminModerationClient({
   const [corrections, setCorrections] = useState(initialCorrections);
   const [outbox, setOutbox] = useState(initialOutbox);
   const [revisions, setRevisions] = useState(initialRevisions);
-  const [activeTab, setActiveTab] = useState<AdminTab>('pending');
+  const [activeTab, setActiveTab] = useState<AdminTab>(() =>
+    !initialSelectedId &&
+    !initialCorrections.some((c) => c.status === 'pending') &&
+    (catalogStats?.needsVerificationCount ?? 0) > 0
+      ? 'daily_curation'
+      : 'pending',
+  );
   const [authResolved, setAuthResolved] = useState(!cloudMode);
   const [isAuthorizedAdmin, setIsAuthorizedAdmin] = useState(!cloudMode);
 
@@ -110,7 +116,7 @@ export function AdminModerationClient({
   const reviewNoteRef = useRef<HTMLTextAreaElement>(null);
 
   // Daily Curation & Pipeline Health state
-  const [curationView, setCurationView] = useState<CurationQueueView>('missing_lyrics');
+  const [curationView, setCurationView] = useState<CurationQueueView>('needs_verification');
   const [curationItems, setCurationItems] = useState<Bhajan[]>([]);
   const [selectedCurationId, setSelectedCurationId] = useState('');
   const [curationLoading, setCurationLoading] = useState(false);
@@ -716,6 +722,14 @@ export function AdminModerationClient({
             {(catalogStats.youtubeVideosCount ?? 0) > 0 && (
               <span className="badge">YouTube Videos: {catalogStats.youtubeVideosCount}</span>
             )}
+            {(catalogStats.needsVerificationCount ?? 0) > 0 && (
+              <span className="badge badge-pending">
+                Needs Verification (Duplicates): {catalogStats.needsVerificationCount}
+              </span>
+            )}
+            {(catalogStats.missingLyricsCount ?? 0) > 0 && (
+              <span className="badge">Missing Lyrics: {catalogStats.missingLyricsCount}</span>
+            )}
           </div>
         )}
         <div className="stats-strip">
@@ -832,6 +846,9 @@ export function AdminModerationClient({
               onClick={() => setActiveTab('daily_curation')}
             >
               Daily Curation
+              {(catalogStats?.needsVerificationCount ?? 0) > 0
+                ? ` (${catalogStats!.needsVerificationCount} Doubt)`
+                : ''}
             </button>
             <button
               id="admin-tab-pipeline_health"
@@ -1023,11 +1040,29 @@ export function AdminModerationClient({
             tabIndex={activeTab === 'daily_curation' ? 0 : undefined}
           >
             <div className="tabpanel-inner">
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  marginBottom: '1rem',
+                }}
+              >
                 {(
                   [
-                    ['missing_lyrics', 'Missing Lyrics'],
-                    ['needs_verification', 'Needs Verification (Doubt)'],
+                    [
+                      'needs_verification',
+                      (catalogStats?.needsVerificationCount ?? 0) > 0
+                        ? `Needs Verification (Doubt · ${catalogStats!.needsVerificationCount})`
+                        : 'Needs Verification (Doubt)',
+                    ],
+                    [
+                      'missing_lyrics',
+                      (catalogStats?.missingLyricsCount ?? 0) > 0
+                        ? `Missing Lyrics (${catalogStats!.missingLyricsCount})`
+                        : 'Missing Lyrics',
+                    ],
                     ['ambiguous_long', 'Ambiguous >6.5m'],
                     ['duplicate_log', 'Duplicate Clearance Log'],
                   ] as const
@@ -1041,6 +1076,15 @@ export function AdminModerationClient({
                     {vLabel}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={curationLoading}
+                  onClick={() => void loadCurationData(curationView)}
+                  style={{ marginLeft: 'auto' }}
+                >
+                  {curationLoading ? 'Refreshing…' : '↻ Refresh'}
+                </button>
               </div>
 
               {curationError && (
