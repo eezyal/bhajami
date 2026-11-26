@@ -81,11 +81,22 @@ export function StreamRadioView({
   const [ytPlaying, setYtPlaying] = useState(false);
   const [showMiniLyrics, setShowMiniLyrics] = useState(true);
   const [miniLyricsSetIdx, setMiniLyricsSetIdx] = useState(0);
+  const [selectedRecordingId, setSelectedRecordingId] = useState<string | null>(null);
 
-  const { recording: activeRec, hasAudioOption, hasVideoOption } = pickStreamRecording(
-    currentBhajan,
-    mediaMode,
+  const handleSwitchMediaMode = useCallback(
+    (nextMode: StreamMediaMode) => {
+      setSelectedRecordingId(null);
+      onMediaModeChange(nextMode);
+    },
+    [onMediaModeChange],
   );
+
+  const {
+    recording: activeRec,
+    hasAudioOption,
+    hasVideoOption,
+    defaultRecordingId,
+  } = pickStreamRecording(currentBhajan, mediaMode, selectedRecordingId);
   const isDirectAudio = Boolean(activeRec && !activeRec.youtubeVideoId);
   const audioUrl = isDirectAudio && activeRec
     ? activeRec.localPath
@@ -118,9 +129,13 @@ export function StreamRadioView({
   if (currentBhajan?.gentsPitch?.raw) miniMetaItems.push({ label: `Gents: ${currentBhajan.gentsPitch.raw}` });
   if (currentBhajan?.ladiesPitch?.raw) miniMetaItems.push({ label: `Ladies: ${currentBhajan.ladiesPitch.raw}` });
   if (currentBhajan?.language) miniMetaItems.push({ label: currentBhajan.language });
+  if ((currentBhajan?.recordings?.length ?? 0) > 1) {
+    miniMetaItems.push({ label: `${currentBhajan!.recordings.length} versions` });
+  }
 
   useEffect(() => {
     setMiniLyricsSetIdx(0);
+    setSelectedRecordingId(null);
   }, [currentEntry?.id]);
 
   useEffect(() => {
@@ -244,7 +259,7 @@ export function StreamRadioView({
               type="button"
               className={`btn btn-sm ${mediaMode === 'audio' ? 'btn-success' : 'btn-primary'}`}
               aria-pressed={mediaMode === 'audio'}
-              onClick={() => onMediaModeChange(mediaMode === 'audio' ? 'video' : 'audio')}
+              onClick={() => handleSwitchMediaMode(mediaMode === 'audio' ? 'video' : 'audio')}
               title="Toggle sticky Audio vs Video mode across all tracks"
             >
               Mode: {mediaMode === 'audio' ? 'Audio' : 'Video'}
@@ -493,7 +508,7 @@ export function StreamRadioView({
                     <button
                       type="button"
                       className="btn btn-sm"
-                      onClick={() => onMediaModeChange('video')}
+                      onClick={() => handleSwitchMediaMode('video')}
                     >
                       Show Video
                     </button>
@@ -511,7 +526,7 @@ export function StreamRadioView({
                 autoPlay={autoPlay}
                 minimized={minimized}
                 onPlayStateChange={setYtPlaying}
-                onMediaModeChange={!minimized && mediaMode === 'video' ? onMediaModeChange : undefined}
+                onMediaModeChange={!minimized && mediaMode === 'video' ? handleSwitchMediaMode : undefined}
                 onEnded={autoPlay ? onNext : undefined}
               />
             ) : minimized ? null : loadingDetail && !currentBhajan ? (
@@ -626,20 +641,63 @@ export function StreamRadioView({
                 </div>
               </section>
             ) : null
-          ) : currentBhajan?.lyricsSets?.[0]?.lines?.length ? (
-            <details>
-              <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
-                Show Lyrics ({currentBhajan.lyricsSets[0].language})
-              </summary>
-              <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.2rem' }}>
-                {currentBhajan.lyricsSets[0].lines.map((line, i) => (
-                  <div key={`${i}-${line}`} style={{ fontSize: '0.92rem' }}>
-                    {line}
+          ) : (
+            <>
+              {(currentBhajan?.recordings?.length ?? 0) > 1 && (
+                <details className="versions-disclosure">
+                  <summary className="versions-summary">
+                    More Versions ({currentBhajan!.recordings.length}) · Playing:{' '}
+                    {activeRec?.label || activeRec?.id || 'Version'}
+                  </summary>
+                  <ul className="versions-list" aria-label="Available bhajan versions">
+                    {currentBhajan!.recordings.map((rec) => {
+                      const isActive = rec.id === activeRec?.id;
+                      const isDefault = Boolean(rec.isDefault || rec.id === defaultRecordingId);
+                      const isYt = Boolean(rec.youtubeVideoId);
+                      const dur =
+                        typeof rec.durationSec === 'number' && rec.durationSec > 0
+                          ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, '0')}`
+                          : null;
+                      return (
+                        <li key={rec.id}>
+                          <button
+                            type="button"
+                            className="version-option-btn"
+                            aria-pressed={isActive}
+                            onClick={() => setSelectedRecordingId(rec.id)}
+                          >
+                            <span>
+                              <strong>{rec.label || rec.id}</strong>
+                              {dur ? <span className="field-hint"> · {dur}</span> : null}
+                            </span>
+                            <span className="version-option-badges">
+                              <span className="badge">{isYt ? 'Video' : 'Audio'}</span>
+                              {isDefault && <span className="badge badge-pending">Default</span>}
+                              {isActive && <span className="badge badge-verified">Playing</span>}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </details>
+              )}
+              {currentBhajan?.lyricsSets?.[0]?.lines?.length ? (
+                <details>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
+                    Show Lyrics ({currentBhajan.lyricsSets[0].language})
+                  </summary>
+                  <div style={{ marginTop: '0.5rem', display: 'grid', gap: '0.2rem' }}>
+                    {currentBhajan.lyricsSets[0].lines.map((line, i) => (
+                      <div key={`${i}-${line}`} style={{ fontSize: '0.92rem' }}>
+                        {line}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </details>
-          ) : null}
+                </details>
+              ) : null}
+            </>
+          )}
         </div>
       ) : !minimized ? (
         <div className="stream-stage-card">

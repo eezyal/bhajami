@@ -63,6 +63,7 @@ export interface CloudApprovedOverride {
   sourceUrl?: string;
   recordings?: RecordingSource[];
   addedRecordings?: RecordingSource[];
+  defaultRecordingId?: string | null;
   isEstimated?: boolean;
   lyricsMissing?: boolean;
   matchStatus?: MatchStatus;
@@ -361,6 +362,11 @@ export function buildCanonicalBhajanFields(
   if (ov.addedRecordings?.length) {
     out.addedRecordings = ov.addedRecordings;
   }
+  const defaultRecId =
+    ov.defaultRecordingId !== undefined ? ov.defaultRecordingId : existingBhajan?.defaultRecordingId;
+  if (typeof defaultRecId === 'string' && defaultRecId.trim()) {
+    out.defaultRecordingId = defaultRecId.trim();
+  }
 
   if (typeof ov.isEstimated === 'boolean') out.isEstimated = ov.isEstimated;
   if (typeof ov.lyricsMissing === 'boolean') out.lyricsMissing = ov.lyricsMissing;
@@ -568,6 +574,10 @@ export function parseBhajanRecord(bhajanId: string, fields: Record<string, unkno
     glossary: Array.isArray(fields.glossary) ? (fields.glossary as Bhajan['glossary']) : [],
     recordings: mergeRecordingArrays(mergedBaseRecordings, addedRecs),
     addedRecordings: addedRecs.length ? addedRecs : undefined,
+    defaultRecordingId:
+      typeof fields.defaultRecordingId === 'string' && fields.defaultRecordingId.trim()
+        ? fields.defaultRecordingId.trim()
+        : null,
     sheetMusicUrl: typeof fields.sheetMusicUrl === 'string' ? fields.sheetMusicUrl : null,
     sourceUrl: typeof fields.sourceUrl === 'string' ? fields.sourceUrl : null,
     metadataSource:
@@ -663,6 +673,10 @@ function parseOverrideFromFields(
     addedRecordings: Array.isArray(fields.addedRecordings)
       ? (fields.addedRecordings as RecordingSource[])
       : undefined,
+    defaultRecordingId:
+      typeof fields.defaultRecordingId === 'string' && fields.defaultRecordingId.trim()
+        ? fields.defaultRecordingId.trim()
+        : undefined,
     isEstimated: typeof fields.isEstimated === 'boolean' ? fields.isEstimated : undefined,
     lyricsMissing: typeof fields.lyricsMissing === 'boolean' ? fields.lyricsMissing : undefined,
     matchStatus:

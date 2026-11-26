@@ -158,6 +158,8 @@ export default function App() {
   const [streamLoadingDetail, setStreamLoadingDetail] = useState(false);
   const [streamDetailFailed, setStreamDetailFailed] = useState(false);
   const [showStreamLyrics, setShowStreamLyrics] = useState(false);
+  const [selectedStreamRecId, setSelectedStreamRecId] = useState<string | null>(null);
+  const [showStreamVersions, setShowStreamVersions] = useState(false);
   const [showMiniLyrics, setShowMiniLyrics] = useState(false);
   const [miniLyricsSetIdx, setMiniLyricsSetIdx] = useState(0);
   const miniLyricsScrollRef = useRef<ScrollView>(null);
@@ -372,6 +374,8 @@ export default function App() {
   useEffect(() => {
     setShowStreamLyrics(false);
     setStreamYtPlaying(false);
+    setSelectedStreamRecId(null);
+    setShowStreamVersions(false);
   }, [activeStreamEntry?.id]);
 
   const handleToggleLike = useCallback((bhajanId: string) => {
@@ -393,6 +397,7 @@ export default function App() {
   }, []);
 
   const handleMediaModeChange = useCallback((next: StreamMediaMode) => {
+    setSelectedStreamRecId(null);
     setStreamMediaMode(next);
     void saveStoredMediaMode(next);
   }, []);
@@ -464,9 +469,10 @@ export default function App() {
     recording: streamPreferredRec,
     hasAudioOption: streamHasAudioOption,
     hasVideoOption: streamHasVideoOption,
+    defaultRecordingId: streamDefaultRecordingId,
   } = useMemo(
-    () => pickStreamRecording(activeStreamBhajan, streamMediaMode),
-    [activeStreamBhajan, streamMediaMode],
+    () => pickStreamRecording(activeStreamBhajan, streamMediaMode, selectedStreamRecId),
+    [activeStreamBhajan, selectedStreamRecId, streamMediaMode],
   );
   const streamPlayback = useMemo(
     () => resolvePlaybackAction(streamPreferredRec, apiBaseUrl),
@@ -1611,6 +1617,76 @@ export default function App() {
                   ? streamPlayback.reason
                   : 'No playable audio source is linked to this bhajan yet.'}
               </Text>
+            )}
+
+            {(activeStreamBhajan?.recordings?.length ?? 0) > 1 && (
+              <View style={styles.sectionStack}>
+                <Pressable
+                  onPress={() => setShowStreamVersions((v) => !v)}
+                  style={[
+                    styles.smallBtn,
+                    {
+                      borderWidth: 1,
+                      borderColor: theme.border,
+                      backgroundColor: theme.surfaceRaised,
+                      alignSelf: 'flex-start',
+                    },
+                  ]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.accent }]}>
+                    {showStreamVersions
+                      ? `▼ Hide Versions (${activeStreamBhajan!.recordings.length})`
+                      : `▶ More Versions (${activeStreamBhajan!.recordings.length})`}
+                  </Text>
+                </Pressable>
+                {showStreamVersions && (
+                  <View style={styles.sectionStack}>
+                    {activeStreamBhajan!.recordings.map((rec) => {
+                      const isActive = rec.id === streamPreferredRec?.id;
+                      const isDefault = Boolean(rec.isDefault || rec.id === streamDefaultRecordingId);
+                      const isYt = Boolean(rec.youtubeVideoId);
+                      return (
+                        <Pressable
+                          key={rec.id}
+                          onPress={() => setSelectedStreamRecId(rec.id)}
+                          style={[
+                            styles.recCard,
+                            {
+                              backgroundColor: isActive ? theme.surfaceRaised : theme.bg,
+                              borderColor: isActive ? theme.accent : theme.border,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.listTitle, { color: theme.text }]}>
+                            {rec.label || rec.id}
+                          </Text>
+                          <View style={styles.chipWrap}>
+                            <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                              <Text style={[styles.badgeText, { color: theme.text }]}>
+                                {isYt ? 'Video' : 'Audio'}
+                              </Text>
+                            </View>
+                            {isDefault && (
+                              <View style={[styles.badge, { backgroundColor: theme.chipBg }]}>
+                                <Text style={[styles.badgeText, { color: theme.accent }]}>
+                                  Default
+                                </Text>
+                              </View>
+                            )}
+                            {isActive && (
+                              <View style={[styles.badge, { backgroundColor: theme.badgeSuccessBg }]}>
+                                <Text style={[styles.badgeText, { color: theme.badgeSuccessText }]}>
+                                  Playing
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
             )}
           </View>
         )}

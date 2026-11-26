@@ -343,23 +343,49 @@ export function isYouTubeRecording(rec: RecordingSource): boolean {
   return Boolean(rec.externalUrl && /(?:youtube\.com|youtu\.be)/i.test(rec.externalUrl));
 }
 
+/** Returns true if a recording has an audio URL/path or YouTube video reference. */
+export function isPlayableRecording(rec: RecordingSource): boolean {
+  return Boolean(rec.localPath?.trim() || rec.externalUrl?.trim() || rec.youtubeVideoId?.trim());
+}
+
 /**
- * Selects the optimal recording according to the user's sticky `'audio'` (direct MP3 first,
- * preferring SSS Media Centre Prasanthi audio over Sai Rhythms reference audio) vs `'video'`
- * (YouTube first) preference while falling back cleanly across the unified stream queue.
+ * Selects the optimal recording according to:
+ *   1. Explicit user version selection (`preferredRecordingId`) when playable
+ *   2. Admin-designated default version (`isDefault` / `bhajan.defaultRecordingId`),
+ *      while respecting explicit `'video'` mode when a video option exists
+ *   3. Sticky `'audio'` (direct MP3 first, preferring SSS Media Centre over Sai Rhythms)
+ *      vs `'video'` (YouTube first) fallback across the unified stream queue.
  */
 export function pickStreamRecording(
   bhajan: Bhajan | null | undefined,
   mediaMode: StreamMediaMode,
+  preferredRecordingId?: string | null,
 ): {
   recording: RecordingSource | null;
   hasAudioOption: boolean;
   hasVideoOption: boolean;
+  defaultRecordingId: string | null;
 } {
   const recs = bhajan?.recordings ?? [];
   if (recs.length === 0) {
-    return { recording: null, hasAudioOption: false, hasVideoOption: false };
+    return {
+      recording: null,
+      hasAudioOption: false,
+      hasVideoOption: false,
+      defaultRecordingId: null,
+    };
   }
+
+  const adminDefault =
+    recs.find((r) => r.isDefault === true) ??
+    (bhajan?.defaultRecordingId
+      ? recs.find((r) => r.id === bhajan.defaultRecordingId)
+      : undefined);
+  const playableDefault = adminDefault && isPlayableRecording(adminDefault) ? adminDefault : null;
+
+  const userPicked = preferredRecordingId
+    ? recs.find((r) => r.id === preferredRecordingId && isPlayableRecording(r))
+    : undefined;
 
   const sssmcAudio =
     recs.find((r) => isDirectAudioRecording(r) && r.collection === 'sssmediacentre_bhajan_a_day') ??
@@ -369,14 +395,20 @@ export function pickStreamRecording(
     recs.find((r) => isYouTubeRecording(r) && r.embeddable !== false) ?? null;
   const anyYt = embeddableYt ?? recs.find(isYouTubeRecording) ?? null;
 
-  const preferred =
-    mediaMode === 'video'
-      ? anyYt ?? directAudio ?? recs[0]
-      : directAudio ?? anyYt ?? recs[0];
+  const preferred = userPicked
+    ? userPicked
+    : mediaMode === 'video'
+      ? (playableDefault && isYouTubeRecording(playableDefault) ? playableDefault : null) ??
+        anyYt ??
+        playableDefault ??
+        directAudio ??
+        recs[0]
+      : playableDefault ?? directAudio ?? anyYt ?? recs[0];
 
   return {
     recording: preferred,
     hasAudioOption: Boolean(directAudio),
     hasVideoOption: Boolean(anyYt),
+    defaultRecordingId: adminDefault?.id ?? null,
   };
 }

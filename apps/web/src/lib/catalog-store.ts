@@ -304,6 +304,24 @@ function mergeRecordings(
   return [...added, ...filtered];
 }
 
+function applyDefaultRecordingOrder(
+  recordings: RecordingSource[],
+  defaultRecordingId: string | null | undefined,
+): RecordingSource[] {
+  if (!defaultRecordingId || recordings.length === 0) return recordings;
+  const idx = recordings.findIndex((r) => r.id === defaultRecordingId);
+  if (idx < 0) return recordings;
+  const chosen = { ...recordings[idx], isDefault: true };
+  const others = recordings
+    .filter((_, i) => i !== idx)
+    .map((r) => {
+      if (!r.isDefault) return r;
+      const { isDefault: _omitted, ...rest } = r;
+      return rest;
+    });
+  return [chosen, ...others];
+}
+
 function buildBhajanFromOverride(ov: ApprovedOverride): Bhajan {
   const gentsPitch =
     ov.gentsPitch ??
@@ -343,7 +361,11 @@ function buildBhajanFromOverride(ov: ApprovedOverride): Bhajan {
     meaning: ov.meaning ?? null,
     lyricsSets: ov.lyricsSets ?? [],
     glossary: ov.glossary ?? [],
-    recordings: ov.recordings ?? ov.addedRecordings ?? [],
+    recordings: applyDefaultRecordingOrder(
+      ov.recordings ?? ov.addedRecordings ?? [],
+      ov.defaultRecordingId,
+    ),
+    defaultRecordingId: ov.defaultRecordingId ?? null,
     sheetMusicUrl: ov.sheetMusicUrl ?? null,
     sourceUrl: ov.sourceUrl ?? null,
     metadataSource: ov.metadataSource ?? 'community_contributed',
@@ -393,6 +415,11 @@ function applyOverrideOntoBase(base: Bhajan, ov: ApprovedOverride): Bhajan {
   const mergedRecordings = ov.recordings
     ? mergeRecordings(mergeRecordings(base.recordings, ov.recordings), ov.addedRecordings)
     : mergeRecordings(base.recordings, ov.addedRecordings);
+  const resolvedDefaultRecordingId = ov.defaultRecordingId ?? base.defaultRecordingId ?? null;
+  const orderedRecordings = applyDefaultRecordingOrder(
+    mergedRecordings,
+    resolvedDefaultRecordingId,
+  );
 
   const next: Bhajan = {
     ...base,
@@ -414,7 +441,8 @@ function applyOverrideOntoBase(base: Bhajan, ov: ApprovedOverride): Bhajan {
     notesRange: ov.notesRange ?? base.notesRange,
     sheetMusicUrl: ov.sheetMusicUrl ?? base.sheetMusicUrl,
     sourceUrl: ov.sourceUrl ?? base.sourceUrl,
-    recordings: mergedRecordings,
+    recordings: orderedRecordings,
+    defaultRecordingId: resolvedDefaultRecordingId,
     isEstimated: ov.isEstimated ?? base.isEstimated,
     lyricsMissing: ov.lyricsMissing ?? base.lyricsMissing,
     matchStatus: ov.matchStatus ?? base.matchStatus,

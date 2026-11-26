@@ -8,10 +8,12 @@ import {
   type Bhajan,
   type BhajanRevision,
   type CatalogStats,
+  type DuplicateClearanceLogEntry,
   type IngestionRunDoc,
   type LyricCorrection,
   type OutboxEmailRecord,
   type ProposedMetadataPatch,
+  type RecordingSource,
   type SubmissionType,
 } from '@bhajami/shared';
 import {
@@ -37,7 +39,18 @@ type AdminTab =
   | 'daily_curation'
   | 'pipeline_health';
 
-type CurationQueueView = 'missing_lyrics' | 'needs_verification' | 'ambiguous_long';
+type CurationQueueView =
+  | 'missing_lyrics'
+  | 'needs_verification'
+  | 'ambiguous_long'
+  | 'duplicate_log';
+
+const QUICK_DISTINCT_REASONS = [
+  'Different verses (same 1st line)',
+  'Different raga / tune',
+  'Instrumental vs Vocal',
+  'Different deity / bhajan',
+] as const;
 
 interface AdminModerationClientProps {
   initialCorrections: LyricCorrection[];
@@ -108,6 +121,16 @@ export function AdminModerationClient({
   const [dismissReason, setDismissReason] = useState('');
   const [pipelineRuns, setPipelineRuns] = useState<IngestionRunDoc[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
+  const [candidateTargets, setCandidateTargets] = useState<
+    Record<string, Bhajan | null | 'loading'>
+  >({});
+  const [selectedDefaultRecByPair, setSelectedDefaultRecByPair] = useState<
+    Record<string, string>
+  >({});
+  const [distinctReasonByPair, setDistinctReasonByPair] = useState<
+    Record<string, string>
+  >({});
+  const [duplicateLog, setDuplicateLog] = useState<DuplicateClearanceLogEntry[]>([]);
 
   const pendingList = useMemo(
     () => corrections.filter((c) => c.status === 'pending'),
@@ -177,15 +200,21 @@ export function AdminModerationClient({
       try {
         const token =
           explicitToken !== undefined ? explicitToken : await getCurrentFirebaseIdToken();
-        const res = await fetch(`/api/admin/curation?view=${encodeURIComponent(view)}&limit=25`, {
-          cache: 'no-store',
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
+        const limit = view === 'needs_verification' || view === 'duplicate_log' ? 50 : 25;
+        const res = await fetch(
+          `/api/admin/curation?view=${encodeURIComponent(view)}&limit=${limit}`,
+          {
+            cache: 'no-store',
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          },
+        );
         const data = await res.json();
         if (!res.ok) {
           setCurationError(data.error || 'Failed loading curation queue.');
         } else if (view === 'runs') {
           setPipelineRuns(data.runs || []);
+        } else if (view === 'duplicate_log') {
+          setDuplicateLog(data.duplicateLog || []);
         } else {
           const items: Bhajan[] = data.items || [];
           setCurationItems(items);
@@ -239,6 +268,34 @@ export function AdminModerationClient({
       setDismissReason('');
     }
   }, [selectedCurationItem]);
+
+  useEffect(() => {
+    const candidates = selectedCurationItem?.matchCandidates ?? [];
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+    for (const cand of candidates) {
+      const targetId = cand.targetBhajanId;
+      if (!targetId || candidateTargets[targetId] !== undefined) continue;
+
+      setCandidateTargets((prev) => ({ ...prev, [targetId]: 'loading' }));
+      void fetch(`/api/bhajans/${encodeURIComponent(targetId)}`, { cache: 'no-store' })
+        .then(async (res) => {
+          if (!res.ok) return null;
+          const data = (await res.json()) as { bhajan?: Bhajan };
+          return data.bhajan ?? null;
+        })
+        .catch(() => null)
+        .then((bhajanDoc) => {
+          if (cancelled) return;
+          setCandidateTargets((prev) => ({ ...prev, [targetId]: bhajanDoc }));
+        });
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [candidateTargets, selectedCurationItem]);
 
   const reloadAll = async (explicitToken?: string | null) => {
     const token = explicitToken !== undefined ? explicitToken : await getCurrentFirebaseIdToken();
@@ -412,7 +469,10 @@ export function AdminModerationClient({
     }
   };
 
-  const handleCurationAction = async (body: Record<string, unknown>, successMsg: string) => {
+  const handleCurationAction = async (
+    body: Record<string, unknown>,
+    successMsg: string,
+  ): Promise<boolean> => {
     setActionBusy(true);
     setCurationError(null);
     setBanner(null);
@@ -430,12 +490,14 @@ export function AdminModerationClient({
       if (!res.ok) {
         setCurationError(json.error || 'Curation action failed.');
         setActionBusy(false);
-        return;
+        return false;
       }
       await loadCurationData(curationView, token);
       setBanner(successMsg);
+      return true;
     } catch (err) {
       setCurationError(err instanceof Error ? err.message : 'Network error during curation action.');
+      return false;
     } finally {
       setActionBusy(false);
     }
@@ -967,6 +1029,7 @@ export function AdminModerationClient({
                     ['missing_lyrics', 'Missing Lyrics'],
                     ['needs_verification', 'Needs Verification (Doubt)'],
                     ['ambiguous_long', 'Ambiguous >6.5m'],
+                    ['duplicate_log', 'Duplicate Clearance Log'],
                   ] as const
                 ).map(([vKey, vLabel]) => (
                   <button
@@ -988,6 +1051,108 @@ export function AdminModerationClient({
 
               {curationLoading ? (
                 <p className="field-hint">Loading curation queue…</p>
+              ) : curationView === 'duplicate_log' ? (
+                <div style={{ display: 'grid', gap: '0.85rem' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexWrap: 'wrap',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                    }}
+                  >
+                    <p className="field-hint" style={{ margin: 0 }}>
+                      {duplicateLog.length} logged decisions (
+                      {duplicateLog.filter((e) => e.decision === 'merged').length} merged ·{' '}
+                      {duplicateLog.filter((e) => e.decision === 'kept_distinct').length} kept distinct). Local reviews are mirrored to <code>apps/web/data/duplicate-clearance-log.jsonl</code> for offline learning.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={duplicateLog.length === 0}
+                      onClick={() => {
+                        const jsonl = duplicateLog.map((row) => JSON.stringify(row)).join('\n') + '\n';
+                        const blob = new Blob([jsonl], { type: 'application/x-ndjson' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = 'duplicate-clearance-log.jsonl';
+                        link.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
+                      Download Log (.jsonl)
+                    </button>
+                  </div>
+                  {duplicateLog.length === 0 ? (
+                    <p style={{ color: 'var(--muted)' }}>
+                      No duplicate review decisions recorded yet. Review pairs in &quot;Needs Verification (Doubt)&quot; to build the clearance log.
+                    </p>
+                  ) : (
+                    <div className="table-wrapper">
+                      <table className="mod-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Decision</th>
+                            <th scope="col">Target ← Source</th>
+                            <th scope="col">Signal &amp; Score</th>
+                            <th scope="col">Difference Note / Default Version</th>
+                            <th scope="col">Decided At</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {duplicateLog.map((entry) => (
+                            <tr key={entry.id}>
+                              <td>
+                                <span
+                                  className={`badge ${
+                                    entry.decision === 'merged'
+                                      ? 'badge-verified'
+                                      : 'badge-info-requested'
+                                  }`}
+                                >
+                                  {entry.decision === 'merged' ? 'Merged' : 'Kept Distinct'}
+                                </span>
+                              </td>
+                              <th>
+                                <div>{entry.targetTitle}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                  ← {entry.sourceTitle} (<code>{entry.sourceBhajanId}</code>)
+                                </div>
+                              </th>
+                              <td style={{ fontSize: '0.82rem' }}>
+                                {typeof entry.candidateScore === 'number'
+                                  ? `${(entry.candidateScore * 100).toFixed(1)}%`
+                                  : '—'}
+                                {entry.candidateReason ? (
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                                    {entry.candidateReason}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td style={{ fontSize: '0.84rem' }}>
+                                {entry.decision === 'kept_distinct' ? (
+                                  <span>{entry.adminNote || <em>(No explanation entered)</em>}</span>
+                                ) : (
+                                  <span>
+                                    Default: <code>{entry.defaultRecordingId || 'none'}</code>
+                                    {typeof entry.combinedRecordingCount === 'number'
+                                      ? ` (${entry.combinedRecordingCount} media total)`
+                                      : ''}
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ whiteSpace: 'nowrap', fontSize: '0.8rem' }}>
+                                {entry.decidedAt}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               ) : curationItems.length === 0 ? (
                 <p style={{ color: 'var(--muted)' }}>
                   No items waiting in &quot;{curationView.replace('_', ' ')}&quot;.
@@ -1065,67 +1230,247 @@ export function AdminModerationClient({
                       {(selectedCurationItem.matchCandidates?.length ?? 0) > 0 && (
                         <div style={{ marginBottom: '1rem' }}>
                           <div className="control-label">Candidate Matches (Doubt Resolution)</div>
-                          <div style={{ display: 'grid', gap: '0.5rem' }}>
-                            {selectedCurationItem.matchCandidates!.map((cand) => (
-                              <div
-                                key={cand.targetBhajanId}
-                                style={{
-                                  display: 'flex',
-                                  flexWrap: 'wrap',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  gap: '0.5rem',
-                                  padding: '0.55rem 0.75rem',
-                                  border: '1px solid var(--border)',
-                                  borderRadius: '8px',
-                                  background: 'var(--surface)',
-                                }}
-                              >
-                                <div>
-                                  <strong>{cand.targetTitle}</strong> (
-                                  {(cand.score * 100).toFixed(1)}% · {cand.reason})
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.4rem' }}>
-                                  <button
-                                    type="button"
-                                    className="btn btn-sm btn-success"
-                                    disabled={actionBusy}
-                                    onClick={() =>
-                                      handleCurationAction(
-                                        {
-                                          action: 'approve_merge',
-                                          sourceBhajanId: selectedCurationItem.id,
-                                          targetBhajanId: cand.targetBhajanId,
-                                          videoId:
-                                            selectedCurationItem.recordings[0]?.youtubeVideoId,
-                                          saveAliasTitle: selectedCurationItem.title,
-                                        },
-                                        `Merged "${selectedCurationItem.title}" into "${cand.targetTitle}" and saved alias.`,
-                                      )
-                                    }
+                          <div style={{ display: 'grid', gap: '0.75rem' }}>
+                            {selectedCurationItem.matchCandidates!.map((cand) => {
+                              const pairKey = `${selectedCurationItem.id}::${cand.targetBhajanId}`;
+                              const targetState = candidateTargets[cand.targetBhajanId];
+                              const targetLoaded = targetState !== undefined && targetState !== 'loading';
+                              const targetDoc =
+                                targetState && targetState !== 'loading' ? targetState : null;
+
+                              const combinedMap = new Map<
+                                string,
+                                { rec: RecordingSource; origin: string }
+                              >();
+                              for (const rec of targetDoc?.recordings ?? []) {
+                                if (!combinedMap.has(rec.id)) {
+                                  combinedMap.set(rec.id, { rec, origin: 'Keep Target' });
+                                }
+                              }
+                              for (const rec of selectedCurationItem.recordings ?? []) {
+                                if (!combinedMap.has(rec.id)) {
+                                  combinedMap.set(rec.id, { rec, origin: 'Incoming Duplicate' });
+                                }
+                              }
+                              const combinedRecordings = Array.from(combinedMap.values());
+                              const chosenDefaultId = selectedDefaultRecByPair[pairKey] || '';
+                              const distinctReason = distinctReasonByPair[pairKey] || '';
+                              const reasonInputId = `distinct-reason-${pairKey}`;
+                              const canApproveMerge =
+                                !actionBusy &&
+                                targetLoaded &&
+                                (combinedRecordings.length === 0 || Boolean(chosenDefaultId));
+                              const canKeepDistinct = !actionBusy && Boolean(distinctReason.trim());
+
+                              return (
+                                <div
+                                  key={cand.targetBhajanId}
+                                  className="merge-candidate-card"
+                                >
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      flexWrap: 'wrap',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      gap: '0.5rem',
+                                    }}
                                   >
-                                    Approve Merge &amp; Save Alias
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-sm"
-                                    disabled={actionBusy}
-                                    onClick={() =>
-                                      handleCurationAction(
-                                        {
-                                          action: 'keep_distinct',
-                                          sourceBhajanId: selectedCurationItem.id,
-                                          candidateBhajanId: cand.targetBhajanId,
-                                        },
-                                        `Recorded "${selectedCurationItem.title}" != "${cand.targetTitle}" in doNotMergePairs.`,
-                                      )
-                                    }
-                                  >
-                                    Keep Distinct
-                                  </button>
+                                    <div>
+                                      <strong>{cand.targetTitle}</strong> (
+                                      {(cand.score * 100).toFixed(1)}% · {cand.reason})
+                                      {targetDoc ? (
+                                        <div className="field-hint" style={{ margin: '0.15rem 0 0' }}>
+                                          Target: {[
+                                            targetDoc.deity,
+                                            targetDoc.raga?.name,
+                                            `${targetDoc.lyricsSets?.[0]?.lines?.length ?? 0} lyrics lines`,
+                                            `${targetDoc.recordings?.length ?? 0} media`,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(' · ')}{' '}
+                                          | Source:{' '}
+                                          {`${selectedCurationItem.lyricsSets?.[0]?.lines?.length ?? 0} lyrics lines · ${selectedCurationItem.recordings?.length ?? 0} media`}
+                                        </div>
+                                      ) : targetState === 'loading' ? (
+                                        <div className="field-hint" style={{ margin: '0.15rem 0 0' }}>
+                                          Loading target versions for merge comparison…
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm btn-success"
+                                        disabled={!canApproveMerge}
+                                        title={
+                                          combinedRecordings.length > 0 && !chosenDefaultId
+                                            ? 'Select a Default Version below before approving merge'
+                                            : undefined
+                                        }
+                                        onClick={() =>
+                                          handleCurationAction(
+                                            {
+                                              action: 'approve_merge',
+                                              sourceBhajanId: selectedCurationItem.id,
+                                              targetBhajanId: cand.targetBhajanId,
+                                              defaultRecordingId: chosenDefaultId || undefined,
+                                              videoId:
+                                                selectedCurationItem.recordings[0]?.youtubeVideoId,
+                                              saveAliasTitle: selectedCurationItem.title,
+                                            },
+                                            `Merged "${selectedCurationItem.title}" into "${cand.targetTitle}" and saved alias.`,
+                                          )
+                                        }
+                                      >
+                                        Approve Merge &amp; Save Alias
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm"
+                                        disabled={!canKeepDistinct}
+                                        title={
+                                          !distinctReason.trim()
+                                            ? 'Explain what makes these two bhajans different below before marking Keep Distinct'
+                                            : undefined
+                                        }
+                                        onClick={() => {
+                                          const noteText = distinctReason.trim();
+                                          void handleCurationAction(
+                                            {
+                                              action: 'keep_distinct',
+                                              sourceBhajanId: selectedCurationItem.id,
+                                              candidateBhajanId: cand.targetBhajanId,
+                                              note: noteText,
+                                            },
+                                            `Recorded "${selectedCurationItem.title}" != "${cand.targetTitle}" in doNotMergePairs and clearance log.`,
+                                          ).then((ok) => {
+                                            if (!ok) return;
+                                            setDistinctReasonByPair((prev) => {
+                                              const next = { ...prev };
+                                              delete next[pairKey];
+                                              return next;
+                                            });
+                                          });
+                                        }}
+                                      >
+                                        Keep Distinct
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="distinct-reason-box">
+                                    <label htmlFor={reasonInputId} className="distinct-reason-label">
+                                      Not the same bhajan? Explain the difference (required to Keep Distinct; logged for proximity learning):
+                                    </label>
+                                    <div className="distinct-reason-chips">
+                                      {QUICK_DISTINCT_REASONS.map((preset) => (
+                                        <button
+                                          key={preset}
+                                          type="button"
+                                          className="distinct-reason-chip"
+                                          onClick={() =>
+                                            setDistinctReasonByPair((prev) => ({
+                                              ...prev,
+                                              [pairKey]: preset,
+                                            }))
+                                          }
+                                        >
+                                          {preset}
+                                        </button>
+                                      ))}
+                                    </div>
+                                    <textarea
+                                      id={reasonInputId}
+                                      rows={2}
+                                      maxLength={500}
+                                      className="textarea-control"
+                                      placeholder="e.g., Same first line 'Subrahmanyam' but completely different middle stanzas and Mohanam tune..."
+                                      value={distinctReason}
+                                      onChange={(e) =>
+                                        setDistinctReasonByPair((prev) => ({
+                                          ...prev,
+                                          [pairKey]: e.target.value,
+                                        }))
+                                      }
+                                    />
+                                    <div className="field-hint" style={{ margin: 0, textAlign: 'right' }}>
+                                      {distinctReason.trim().length}/500
+                                    </div>
+                                  </div>
+
+                                  {combinedRecordings.length > 0 && (
+                                    <fieldset className="merge-default-fieldset">
+                                      <legend className="merge-default-legend">
+                                        Select Default Version for Stream (Required) — all other recordings remain available under More Versions
+                                      </legend>
+                                      <div className="merge-default-list">
+                                        {combinedRecordings.map(({ rec, origin }) => {
+                                          const radioId = `merge-def-${pairKey}-${rec.id}`;
+                                          const isYt = Boolean(rec.youtubeVideoId);
+                                          const durMin =
+                                            typeof rec.durationSec === 'number' && rec.durationSec > 0
+                                              ? `${Math.floor(rec.durationSec / 60)}:${String(rec.durationSec % 60).padStart(2, '0')}`
+                                              : null;
+                                          return (
+                                            <div key={rec.id} className="merge-default-row">
+                                              <label htmlFor={radioId} className="merge-default-option">
+                                                <input
+                                                  id={radioId}
+                                                  type="radio"
+                                                  className="brand-radio"
+                                                  name={`default-rec-${pairKey}`}
+                                                  value={rec.id}
+                                                  checked={chosenDefaultId === rec.id}
+                                                  onChange={() =>
+                                                    setSelectedDefaultRecByPair((prev) => ({
+                                                      ...prev,
+                                                      [pairKey]: rec.id,
+                                                    }))
+                                                  }
+                                                />
+                                                <span className="merge-default-label-text">
+                                                  <strong>{rec.label || rec.id}</strong>{' '}
+                                                  <span className="badge">
+                                                    {isYt ? 'YouTube Video' : 'Audio MP3'}
+                                                  </span>{' '}
+                                                  <span className="badge badge-pending">{origin}</span>
+                                                  {durMin ? (
+                                                    <span className="field-hint"> · {durMin}</span>
+                                                  ) : null}
+                                                </span>
+                                              </label>
+                                              <div className="merge-default-preview">
+                                                {!isYt && rec.externalUrl ? (
+                                                  <audio
+                                                    controls
+                                                    preload="none"
+                                                    src={rec.externalUrl}
+                                                    style={{ height: '30px', maxWidth: '240px' }}
+                                                  />
+                                                ) : rec.youtubeVideoId ? (
+                                                  <a
+                                                    href={
+                                                      rec.externalUrl ||
+                                                      `https://www.youtube.com/watch?v=${rec.youtubeVideoId}`
+                                                    }
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="btn btn-sm"
+                                                  >
+                                                    Watch Video ↗
+                                                  </a>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </fieldset>
+                                  )}
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}

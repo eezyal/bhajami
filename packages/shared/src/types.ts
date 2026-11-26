@@ -39,6 +39,7 @@ export interface RecordingSource {
   matchScore?: number;
   matchMethod?: string;
   lastVerifiedAt?: string;
+  isDefault?: boolean;
 }
 
 export type LyricsScriptKind =
@@ -120,6 +121,7 @@ export interface Bhajan {
   glossary: GlossaryEntry[];
   recordings: RecordingSource[];
   addedRecordings?: RecordingSource[];
+  defaultRecordingId?: string | null;
   sheetMusicUrl?: string | null;
   sourceUrl?: string | null;
   metadataSource: BhajanMetadataSource;
@@ -364,4 +366,21 @@ export interface OutboxEmailRecord {
   htmlBody: string;
   transport: string;
   createdAt: string;
+}
+
+export interface DuplicateClearanceLogEntry {
+  id: string;
+  decision: 'merged' | 'kept_distinct';
+  sourceBhajanId: string;
+  sourceTitle: string;
+  targetBhajanId: string;
+  targetTitle: string;
+  candidateScore?: number | null;
+  candidateReason?: string | null;
+  defaultRecordingId?: string | null;
+  combinedRecordingCount?: number | null;
+  adminNote?: string | null;
+  reviewerEmail: string;
+  decidedAt: string;
+  storageSource?: 'local_jsonl' | 'firestore_do_not_merge' | 'firestore_entity_alias';
 }

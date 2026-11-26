@@ -1736,3 +1736,234 @@ a:focus-visible {
     padding: 0.5rem 0.65rem;
   }
 }
+
+/* Admin Merge Candidate & Default Version Picker (Brand-Consistent Radios) */
+.merge-candidate-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.merge-default-fieldset {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.merge-default-legend {
+  padding: 0 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.merge-default-list {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+
+.merge-default-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.45rem;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.merge-default-row:has(input[type="radio"]:checked) {
+  background: var(--surface-elevated);
+  border-color: var(--accent);
+}
+
+.merge-default-option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  min-height: 28px;
+  flex: 1 1 220px;
+}
+
+.brand-radio {
+  accent-color: var(--accent);
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+@supports not (accent-color: auto) {
+  .merge-default-option input[type="radio"].brand-radio {
+    position: absolute !important;
+    clip-path: inset(50%) !important;
+    overflow: hidden !important;
+    width: 1px !important;
+    height: 1px !important;
+    margin: -1px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    white-space: nowrap !important;
+  }
+
+  .merge-default-option .merge-default-label-text {
+    position: relative;
+    padding-left: 1.65rem;
+    display: inline-block;
+  }
+
+  .merge-default-option .merge-default-label-text::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1.05rem;
+    height: 1.05rem;
+    border: 2px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface);
+    box-sizing: border-box;
+  }
+
+  .merge-default-option input[type="radio"].brand-radio:focus-visible + .merge-default-label-text::before {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .merge-default-option input[type="radio"].brand-radio:checked + .merge-default-label-text::before {
+    border-color: var(--accent);
+    background: radial-gradient(circle, var(--accent) 45%, var(--surface) 50%);
+  }
+}
+
+.merge-default-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Stream User Alternate Versions Disclosure (<details> / <summary>) */
+.versions-disclosure {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 0.45rem 0.7rem;
+}
+
+.versions-disclosure[open] {
+  background: var(--surface);
+}
+
+.versions-summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.86rem;
+  color: var(--ink);
+  list-style: disclosure-closed;
+}
+
+.versions-disclosure[open] .versions-summary {
+  list-style: disclosure-open;
+  margin-bottom: 0.55rem;
+}
+
+.versions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.version-option-btn {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.version-option-btn:hover {
+  border-color: var(--accent);
+}
+
+.version-option-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.version-option-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--surface-elevated);
+}
+
+.version-option-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Admin Keep-Distinct Difference Explanation Box */
+.distinct-reason-box {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.distinct-reason-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.distinct-reason-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.distinct-reason-chip {
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.distinct-reason-chip:hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.distinct-reason-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

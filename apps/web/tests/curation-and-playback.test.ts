@@ -268,7 +268,22 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
   });
 
   it('supports keep_distinct, approve_merge, and exclude_non_bhajan reason validation', async () => {
-    // 1. keep_distinct removes candidate and stores doNotMergePairs entry
+    // 0. keep_distinct rejects overly long >500-char notes
+    const tooLongNoteRes = await fetch(`${baseUrl}/api/admin/curation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'keep_distinct',
+        sourceBhajanId: 'yt_doubtMerge2',
+        candidateBhajanId: 'aao-aao-nandalala',
+        note: 'x'.repeat(501),
+      }),
+    });
+    assert.equal(tooLongNoteRes.status, 400);
+
+    // 1. keep_distinct removes candidate, stores doNotMergePairs entry with note, and logs clearance decision
+    const distinctNote =
+      'Same opening deity invocation but completely different middle stanzas and Mohanam tune';
     const kdRes = await fetch(`${baseUrl}/api/admin/curation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -276,6 +291,7 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
         action: 'keep_distinct',
         sourceBhajanId: 'yt_doubtMerge2',
         candidateBhajanId: 'aao-aao-nandalala',
+        note: distinctNote,
       }),
     });
     assert.equal(kdRes.status, 200);
@@ -286,8 +302,8 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
       false,
     );
 
-    // 2. approve_merge transfers recording, sets slugAliases, saves entityAlias, hides source
-    const mergeRes = await fetch(`${baseUrl}/api/admin/curation`, {
+    // 2. approve_merge requires selecting a valid defaultRecordingId from merged recordings
+    const missingDefaultRes = await fetch(`${baseUrl}/api/admin/curation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -297,12 +313,90 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
         saveAliasTitle: 'Sundara Vinaayaka Live',
       }),
     });
+    assert.equal(missingDefaultRes.status, 400);
+
+    const invalidDefaultRes = await fetch(`${baseUrl}/api/admin/curation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'approve_merge',
+        sourceBhajanId: 'yt_doubtMerge2',
+        targetBhajanId: 'sundara-sundara-vinayaka',
+        defaultRecordingId: 'nonexistent-rec-id',
+      }),
+    });
+    assert.equal(invalidDefaultRes.status, 400);
+
+    const mergeRes = await fetch(`${baseUrl}/api/admin/curation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'approve_merge',
+        sourceBhajanId: 'yt_doubtMerge2',
+        targetBhajanId: 'sundara-sundara-vinayaka',
+        defaultRecordingId: 'yt_doubtMerge2',
+        saveAliasTitle: 'Sundara Vinaayaka Live',
+      }),
+    });
     assert.equal(mergeRes.status, 200);
-    const mergeJson = (await mergeRes.json()) as { aliasId?: string; bhajan: { recordings: Array<{ id: string }>; slugAliases?: string[] } };
+    const mergeJson = (await mergeRes.json()) as {
+      aliasId?: string;
+      bhajan: {
+        defaultRecordingId?: string | null;
+        recordings: Array<{ id: string; isDefault?: boolean }>;
+        slugAliases?: string[];
+      };
+    };
     assert.ok(mergeJson.aliasId);
+    assert.equal(mergeJson.bhajan.defaultRecordingId, 'yt_doubtMerge2');
+    assert.equal(mergeJson.bhajan.recordings[0].id, 'yt_doubtMerge2');
+    assert.equal(mergeJson.bhajan.recordings[0].isDefault, true);
     assert.ok(mergeJson.bhajan.recordings.some((r) => r.id === 'yt_doubtMerge2'));
+    assert.ok(mergeJson.bhajan.recordings.slice(1).every((r) => !r.isDefault));
     assert.ok(mergeJson.bhajan.slugAliases?.includes('yt_doubtMerge2'));
     assert.equal(await catalogStore.getBhajanDetail('yt_doubtMerge2'), null);
+
+    // 2b. duplicate_log view and JSONL mirror record both kept_distinct note and merged default version
+    const logRes = await fetch(`${baseUrl}/api/admin/curation?view=duplicate_log`);
+    assert.equal(logRes.status, 200);
+    const logJson = (await logRes.json()) as {
+      duplicateLog: Array<{
+        decision: string;
+        sourceBhajanId: string;
+        targetBhajanId: string;
+        candidateScore?: number | null;
+        candidateReason?: string | null;
+        defaultRecordingId?: string | null;
+        adminNote?: string | null;
+      }>;
+    };
+    const distinctLog = logJson.duplicateLog.find(
+      (e) =>
+        e.decision === 'kept_distinct' &&
+        e.sourceBhajanId === 'yt_doubtMerge2' &&
+        e.targetBhajanId === 'aao-aao-nandalala',
+    );
+    assert.ok(distinctLog);
+    assert.equal(
+      distinctLog.adminNote,
+      'Same opening deity invocation but completely different middle stanzas and Mohanam tune',
+    );
+    assert.equal(distinctLog.candidateScore, 0.73);
+    assert.equal(distinctLog.candidateReason, 'doubt_band');
+
+    const mergeLog = logJson.duplicateLog.find(
+      (e) =>
+        e.decision === 'merged' &&
+        e.sourceBhajanId === 'yt_doubtMerge2' &&
+        e.targetBhajanId === 'sundara-sundara-vinayaka',
+    );
+    assert.ok(mergeLog);
+    assert.equal(mergeLog.defaultRecordingId, 'yt_doubtMerge2');
+
+    const jsonlPath = path.join(tempDir, 'duplicate-clearance-log.jsonl');
+    assert.equal(fs.existsSync(jsonlPath), true);
+    const jsonlLines = fs.readFileSync(jsonlPath, 'utf-8').trim().split('\n');
+    assert.equal(jsonlLines.length, 2);
 
     // 3. exclude_non_bhajan rejects empty reason and succeeds with non-empty reason
     const badExcl = await fetch(`${baseUrl}/api/admin/curation`, {

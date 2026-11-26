@@ -253,4 +253,75 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
       ['mp3-track', 'yt-only-track'],
     );
   });
+
+  it('honors admin defaultRecordingId / isDefault and user preferredRecordingId override', () => {
+    const multiVersionBhajan = {
+      id: 'multi-ver-1',
+      defaultRecordingId: 'yt_best',
+      recordings: [
+        {
+          id: 'sssmc_001',
+          label: 'SSS Media Centre MP3',
+          collection: 'sssmediacentre_bhajan_a_day',
+          externalUrl: 'https://content.sssmediacentre.org/audio/sample.mp3',
+        },
+        {
+          id: 'mp3_alt',
+          label: 'Sai Rhythms Reference',
+          collection: 'sairhythms_ref',
+          externalUrl: 'https://sairhythms.sathyasai.org/audio/alt.mp3',
+        },
+        {
+          id: 'yt_best',
+          label: 'Prasanthi Mandir Video',
+          collection: 'youtube_prasanthi_mandir_live',
+          youtubeVideoId: 'ytBest123',
+          embeddable: true,
+          isDefault: true,
+        },
+      ],
+    } as unknown as Bhajan;
+
+    // Admin marked yt_best as default -> plays by default in audio stream mode
+    const defaultPick = pickStreamRecording(multiVersionBhajan, 'audio');
+    assert.equal(defaultPick.recording?.id, 'yt_best');
+    assert.equal(defaultPick.defaultRecordingId, 'yt_best');
+
+    // User explicitly picks an alternate MP3 version -> overrides default
+    const userPick = pickStreamRecording(multiVersionBhajan, 'audio', 'mp3_alt');
+    assert.equal(userPick.recording?.id, 'mp3_alt');
+    assert.equal(userPick.defaultRecordingId, 'yt_best');
+
+    // When admin default is direct audio, switching to video mode still picks video
+    const audioDefaultBhajan = {
+      id: 'multi-ver-2',
+      defaultRecordingId: 'mp3_alt',
+      recordings: [
+        {
+          id: 'mp3_alt',
+          label: 'Sai Rhythms Reference',
+          collection: 'sairhythms_ref',
+          externalUrl: 'https://sairhythms.sathyasai.org/audio/alt.mp3',
+          isDefault: true,
+        },
+        {
+          id: 'sssmc_001',
+          label: 'SSS Media Centre MP3',
+          collection: 'sssmediacentre_bhajan_a_day',
+          externalUrl: 'https://content.sssmediacentre.org/audio/sample.mp3',
+        },
+        {
+          id: 'yt_best',
+          label: 'Prasanthi Mandir Video',
+          collection: 'youtube_prasanthi_mandir_live',
+          youtubeVideoId: 'ytBest123',
+          embeddable: true,
+        },
+      ],
+    } as unknown as Bhajan;
+
+    assert.equal(pickStreamRecording(audioDefaultBhajan, 'audio').recording?.id, 'mp3_alt');
+    assert.equal(pickStreamRecording(audioDefaultBhajan, 'video').recording?.id, 'yt_best');
+    assert.equal(pickStreamRecording(audioDefaultBhajan, 'video', 'sssmc_001').recording?.id, 'sssmc_001');
+  });
 });

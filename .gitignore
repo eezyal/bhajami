@@ -10,6 +10,7 @@ dist/
 firebase-debug.log*
 firestore-debug.log*
 apps/web/data/*.json
+apps/web/data/*.jsonl
 apps/web/data/uploads/
 tools/catalog-pipeline/.cache/
 tools/catalog-pipeline/*.sqlite*

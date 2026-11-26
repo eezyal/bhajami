@@ -40,6 +40,11 @@ on:
         required: false
         default: '200'
         type: string
+      run_duplicate_check:
+        description: 'Run daily proximity duplicate checker and queue candidates for Admin Review'
+        required: false
+        default: true
+        type: boolean
 
 concurrency:
   group: daily-catalog-sync
@@ -96,6 +101,7 @@ jobs:
           MAX_YT_VIDEOS: ${{ inputs.max_youtube_videos || '200' }}
           RUN_SSSMC: ${{ inputs.run_sssmediacentre || 'false' }}
           MAX_SSSMC_ITEMS: ${{ inputs.max_sssmediacentre_items || '200' }}
+          RUN_DUPLICATE_CHECK: ${{ inputs.run_duplicate_check || 'true' }}
         run: |
           if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
             echo "FIREBASE_SERVICE_ACCOUNT_JSON secret not configured; skipping cloud sync steps."
@@ -155,6 +161,18 @@ jobs:
               --max-items-per-run "$MAX_SSSMC_ITEMS" \
               --publish-firestore \
               --max-firestore-writes 4000
+          fi
+
+          if [ "$RUN_DUPLICATE_CHECK" != "false" ]; then
+            echo "Running daily proximity duplicate checker..."
+            python3 tools/catalog-pipeline/check_duplicates.py \
+              --source firestore \
+              --publish-firestore \
+              --min-score 0.78 \
+              --max-candidates 200 \
+              --max-firestore-writes 500
+          else
+            echo "Duplicate checker skipped (run_duplicate_check=false)."
           fi
 
           echo "Rebuilding bounded Firestore search shards and catalogMeta/latest..."
