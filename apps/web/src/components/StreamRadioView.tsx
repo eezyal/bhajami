@@ -9,7 +9,7 @@ import {
   type StreamMediaMode,
   type StreamModeKind,
 } from '@bhajami/shared';
-import { YouTubeSegmentPlayer } from './YouTubeSegmentPlayer';
+import { YouTubeSegmentPlayer, type YouTubeSegmentPlayerHandle } from './YouTubeSegmentPlayer';
 
 interface StreamRadioViewProps {
   minimized?: boolean;
@@ -77,7 +77,9 @@ export function StreamRadioView({
   similarRecs,
 }: StreamRadioViewProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const ytRef = useRef<YouTubeSegmentPlayerHandle>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [ytPlaying, setYtPlaying] = useState(false);
 
   const { recording: activeRec, hasAudioOption, hasVideoOption } = pickStreamRecording(
     currentBhajan,
@@ -90,25 +92,35 @@ export function StreamRadioView({
       : activeRec.externalUrl || ''
     : '';
   const isYouTubeOnly = Boolean(activeRec?.youtubeVideoId && !hasAudioOption);
+  const hasMinimizedYt = Boolean(minimized && !audioUrl && activeRec?.youtubeVideoId);
+  const effectivePlaying = isDirectAudio && audioUrl ? isPlaying : ytPlaying;
   const isLiked = currentEntry ? likedSet.has(currentEntry.id) : false;
 
   useEffect(() => {
     setIsPlaying(Boolean(isDirectAudio && audioUrl && autoPlay));
   }, [activeRec?.id, audioUrl, autoPlay, currentEntry?.id, isDirectAudio]);
 
+  useEffect(() => {
+    setYtPlaying(Boolean(!audioUrl && activeRec?.youtubeVideoId && autoPlay));
+  }, [activeRec?.youtubeVideoId, audioUrl, autoPlay, currentEntry?.id]);
+
   const handleTogglePlayPause = useCallback(() => {
-    if (!isDirectAudio || !audioUrl) {
-      onExpand?.();
+    if (isDirectAudio && audioUrl) {
+      const audioEl = audioRef.current;
+      if (!audioEl) return;
+      if (audioEl.paused) {
+        void audioEl.play().catch(() => {});
+      } else {
+        audioEl.pause();
+      }
       return;
     }
-    const audioEl = audioRef.current;
-    if (!audioEl) return;
-    if (audioEl.paused) {
-      void audioEl.play().catch(() => {});
-    } else {
-      audioEl.pause();
+    if (activeRec?.youtubeVideoId) {
+      ytRef.current?.togglePlay();
+      return;
     }
-  }, [audioUrl, isDirectAudio, onExpand]);
+    onExpand?.();
+  }, [activeRec?.youtubeVideoId, audioUrl, isDirectAudio, onExpand]);
 
   return (
     <div className={minimized ? 'mini-stream-host' : 'app-stage'}>
@@ -227,12 +239,18 @@ export function StreamRadioView({
 
       {currentEntry ? (
         <div
-          className={minimized ? 'mini-stream-dock' : 'stream-stage-card'}
+          className={
+            minimized
+              ? hasMinimizedYt
+                ? 'mini-stream-dock mini-stream-dock-with-video'
+                : 'mini-stream-dock'
+              : 'stream-stage-card'
+          }
           role={minimized ? 'region' : undefined}
           aria-label={minimized ? `Minimized Bhajan Player: ${currentEntry.title}` : undefined}
         >
           {minimized ? (
-            <div className="mini-stream-bar-row">
+            <div className={hasMinimizedYt ? 'mini-stream-bar-col' : 'mini-stream-bar-row'}>
               <button
                 type="button"
                 className="mini-stream-title-btn"
@@ -241,8 +259,10 @@ export function StreamRadioView({
               >
                 <span className="mini-stream-kicker">
                   {isDirectAudio && audioUrl
-                    ? `Playing Audio · ${queueIndex + 1}/${queue.length}`
-                    : `Video paused · Tap to resume (${queueIndex + 1}/${queue.length})`}
+                    ? `${isPlaying ? 'Playing Audio' : 'Audio Paused'} · ${queueIndex + 1}/${queue.length}`
+                    : activeRec?.youtubeVideoId
+                      ? `${ytPlaying ? 'Playing Video' : 'Video Paused'} · ${queueIndex + 1}/${queue.length}`
+                      : `Stream Ready · ${queueIndex + 1}/${queue.length}`}
                 </span>
                 <span className="mini-stream-title">{currentEntry.title}</span>
               </button>
@@ -260,16 +280,10 @@ export function StreamRadioView({
                 <button
                   type="button"
                   className="btn btn-sm btn-primary mini-icon-btn"
-                  aria-label={
-                    isDirectAudio && audioUrl
-                      ? isPlaying
-                        ? 'Pause'
-                        : 'Play'
-                      : 'Open Stream to resume video'
-                  }
+                  aria-label={effectivePlaying ? 'Pause' : 'Play'}
                   onClick={handleTogglePlayPause}
                 >
-                  {isDirectAudio && audioUrl ? (isPlaying ? '⏸' : '▶') : '▶'}
+                  {effectivePlaying ? '⏸' : '▶'}
                 </button>
                 <button
                   type="button"
@@ -370,8 +384,16 @@ export function StreamRadioView({
             </div>
           )}
 
-          {/* Audio stays mounted across full <-> minimized for zero-interruption MP3 playback; video never renders in Minimized mode */}
-          <div className={minimized ? 'mini-stream-audio-slot' : undefined}>
+          {/* Both <audio> and <YouTubeSegmentPlayer> stay mounted across full <-> minimized for zero-interruption playback (YT dock stays >= 200x200px TOS floor) */}
+          <div
+            className={
+              minimized
+                ? hasMinimizedYt
+                  ? 'mini-stream-yt-slot'
+                  : 'mini-stream-audio-slot'
+                : undefined
+            }
+          >
             {audioUrl ? (
               <div style={{ display: 'grid', gap: '0.5rem' }}>
                 <audio
@@ -411,21 +433,24 @@ export function StreamRadioView({
                   </div>
                 )}
               </div>
-            ) : minimized ? null : loadingDetail && !currentBhajan ? (
-              <p className="field-hint" style={{ margin: 0 }}>
-                Loading stream audio and lyrics…
-              </p>
             ) : activeRec?.youtubeVideoId ? (
               <YouTubeSegmentPlayer
+                ref={ytRef}
                 videoId={activeRec.youtubeVideoId}
                 title={activeRec.label}
                 startSec={activeRec.startSec}
                 endSec={activeRec.endSec}
                 embeddable={activeRec.embeddable}
                 autoPlay={autoPlay}
-                onMediaModeChange={mediaMode === 'video' ? onMediaModeChange : undefined}
+                minimized={minimized}
+                onPlayStateChange={setYtPlaying}
+                onMediaModeChange={!minimized && mediaMode === 'video' ? onMediaModeChange : undefined}
                 onEnded={autoPlay ? onNext : undefined}
               />
+            ) : minimized ? null : loadingDetail && !currentBhajan ? (
+              <p className="field-hint" style={{ margin: 0 }}>
+                Loading stream audio and lyrics…
+              </p>
             ) : currentBhajan === null && onRetryDetail ? (
               <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.6rem' }}>
                 <p className="field-hint" style={{ margin: 0 }}>

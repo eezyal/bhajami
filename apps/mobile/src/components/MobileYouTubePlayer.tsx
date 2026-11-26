@@ -25,6 +25,7 @@ export interface MobileYouTubePlayerProps {
   endSec?: number;
   embeddable?: boolean;
   autoPlay?: boolean;
+  minimized?: boolean;
   onMediaModeChange?: (next: StreamMediaMode) => void;
   onEnded?: () => void;
   onPlayStateChange?: (playing: boolean) => void;
@@ -189,6 +190,7 @@ export const MobileYouTubePlayer = forwardRef<
     endSec,
     embeddable = true,
     autoPlay = true,
+    minimized = false,
     onMediaModeChange,
     onEnded,
     onPlayStateChange,
@@ -396,8 +398,13 @@ export const MobileYouTubePlayer = forwardRef<
   }
 
   return (
-    <View style={styles.shell}>
-      <View style={[styles.frameFull, { borderColor: theme.border }]}>
+    <View style={[styles.shell, minimized ? styles.shellMini : undefined]}>
+      <View
+        style={[
+          minimized ? styles.frameMini : styles.frameFull,
+          { borderColor: theme.border },
+        ]}
+      >
         {Platform.OS === 'web' ? (
           <View nativeID={webContainerId} style={styles.webHost} />
         ) : (
@@ -415,37 +422,48 @@ export const MobileYouTubePlayer = forwardRef<
         )}
       </View>
 
-      <View style={styles.metaRow}>
-        <Text style={[styles.metaText, { color: theme.textMuted }]}>
-          {chapterLabel ? `Segment ${chapterLabel} · ` : ''}Video
-        </Text>
-        <View style={styles.metaActions}>
-          {onMediaModeChange && (
-            <Pressable
-              onPress={() => onMediaModeChange('audio')}
-              style={[
-                styles.toggleBtn,
-                { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
-              ]}
-            >
-              <Text style={[styles.toggleBtnText, { color: theme.text }]}>Switch to Audio</Text>
+      {!minimized && (
+        <View style={styles.metaRow}>
+          <Text style={[styles.metaText, { color: theme.textMuted }]}>
+            {chapterLabel ? `Segment ${chapterLabel} · ` : ''}Video
+          </Text>
+          <View style={styles.metaActions}>
+            {onMediaModeChange && (
+              <Pressable
+                onPress={() => onMediaModeChange('audio')}
+                style={[
+                  styles.toggleBtn,
+                  { borderColor: theme.border, backgroundColor: theme.surfaceRaised },
+                ]}
+              >
+                <Text style={[styles.toggleBtnText, { color: theme.text }]}>Switch to Audio</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={() => void Linking.openURL(watchUrl)}>
+              <Text style={[styles.watchLink, { color: theme.accent }]}>Watch on YouTube</Text>
             </Pressable>
-          )}
-          <Pressable onPress={() => void Linking.openURL(watchUrl)}>
-            <Text style={[styles.watchLink, { color: theme.accent }]}>Watch on YouTube</Text>
-          </Pressable>
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 });
 
 const styles = StyleSheet.create({
   shell: { gap: 8, width: '100%' },
+  shellMini: { width: 200, gap: 0 },
   frameFull: {
     width: '100%',
     aspectRatio: 16 / 9,
     minHeight: 195,
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    backgroundColor: '#000',
+  },
+  frameMini: {
+    width: 200,
+    height: 200,
     borderRadius: 10,
     overflow: 'hidden',
     borderWidth: 1,

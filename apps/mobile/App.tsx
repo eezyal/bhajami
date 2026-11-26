@@ -607,10 +607,10 @@ export default function App() {
   const handleToggleStreamPlayPause = useCallback(() => {
     if (streamPlayback.kind === 'audio') {
       void playAudioUri(streamPlayback.uri);
-    } else if (streamIsMinimized) {
-      setActiveTab('stream');
     } else if (streamPlayback.kind === 'youtube') {
       ytStreamRef.current?.togglePlay();
+    } else if (streamIsMinimized) {
+      setActiveTab('stream');
     }
   }, [playAudioUri, streamIsMinimized, streamPlayback]);
 
@@ -745,6 +745,9 @@ export default function App() {
   }
 
   const showPersistentStream = streamSessionActive && Boolean(activeStreamEntry);
+  const hasMinimizedStreamYt = Boolean(
+    streamIsMinimized && streamPlayback.kind === 'youtube',
+  );
   const effectiveStreamPlaying =
     streamPlayback.kind === 'youtube' ? streamYtPlaying : isAudioPlaying;
   const activeStreamLiked = activeStreamEntry ? likedSet.has(activeStreamEntry.id) : false;
@@ -1893,24 +1896,29 @@ export default function App() {
         {showPersistentStream && activeStreamEntry && (
           <View
             style={[
-              streamIsMinimized ? styles.miniDockCard : styles.streamStageCard,
+              streamIsMinimized
+                ? hasMinimizedStreamYt
+                  ? styles.miniDockCardWithVideo
+                  : styles.miniDockCard
+                : styles.streamStageCard,
               { backgroundColor: theme.surface, borderColor: theme.border },
             ]}
           >
             {streamIsMinimized ? (
-              <View style={styles.miniDockRow}>
-                <Pressable onPress={() => setActiveTab('stream')} style={{ flex: 1 }}>
+              <View style={hasMinimizedStreamYt ? styles.miniDockVideoCol : styles.miniDockRow}>
+                <Pressable onPress={() => setActiveTab('stream')} style={hasMinimizedStreamYt ? undefined : { flex: 1 }}>
                   <Text style={[styles.miniKicker, { color: theme.accent }]}>
-                    {streamPlayback.kind === 'audio'
-                      ? `Playing Audio · ${safeStreamIdx + 1}/${streamQueue.length}`
-                      : `Video paused · Tap to resume (${safeStreamIdx + 1}/${streamQueue.length})`}
+                    {`${effectiveStreamPlaying ? 'Playing' : 'Paused'} ${streamPlayback.kind === 'audio' ? 'Audio' : 'Video'} · ${safeStreamIdx + 1}/${streamQueue.length}`}
                   </Text>
-                  <Text numberOfLines={1} style={[styles.listTitle, { color: theme.text }]}>
+                  <Text
+                    numberOfLines={hasMinimizedStreamYt ? 2 : 1}
+                    style={[styles.listTitle, { color: theme.text }]}
+                  >
                     {activeStreamEntry.title}
                   </Text>
                 </Pressable>
 
-                <View style={styles.miniControlsRow}>
+                <View style={[styles.miniControlsRow, hasMinimizedStreamYt ? styles.miniControlsWrap : undefined]}>
                   <Pressable
                     onPress={() => advanceStream(-1)}
                     style={[
@@ -1927,16 +1935,10 @@ export default function App() {
                       styles.miniIconBtn,
                       { borderColor: theme.accent, backgroundColor: theme.accent },
                     ]}
-                    accessibilityLabel={
-                      streamPlayback.kind === 'audio'
-                        ? effectiveStreamPlaying
-                          ? 'Pause'
-                          : 'Play'
-                        : 'Resume video in Stream'
-                    }
+                    accessibilityLabel={effectiveStreamPlaying ? 'Pause' : 'Play'}
                   >
                     <Text style={[styles.smallBtnText, { color: theme.accentText }]}>
-                      {streamPlayback.kind === 'audio' && effectiveStreamPlaying ? '⏸' : '▶'}
+                      {effectiveStreamPlaying ? '⏸' : '▶'}
                     </Text>
                   </Pressable>
                   <Pressable
@@ -2072,8 +2074,29 @@ export default function App() {
               </View>
             )}
 
-            {/* No video inset ever rendered in Minimized mode; MP3 audio keeps playing cleanly */}
-            {streamIsMinimized ? null : streamLoadingDetail && !activeStreamBhajan ? (
+            {/* Direct MP3 uses zero-video bar; YouTube stays mounted at >= 200x200px TOS floor inside minimized dock */}
+            {streamPlayback.kind === 'youtube' ? (
+              <MobileYouTubePlayer
+                ref={ytStreamRef}
+                videoId={streamPlayback.videoId}
+                title={streamPreferredRec?.label || activeStreamEntry.title}
+                startSec={streamPreferredRec?.startSec}
+                endSec={streamPreferredRec?.endSec}
+                embeddable={streamPlayback.embeddable}
+                autoPlay={streamAutoPlay}
+                minimized={streamIsMinimized}
+                onMediaModeChange={
+                  !streamIsMinimized && streamMediaMode === 'video'
+                    ? handleMediaModeChange
+                    : undefined
+                }
+                onPlayStateChange={setStreamYtPlaying}
+                onEnded={() => {
+                  if (streamAutoPlay) advanceStream(1);
+                }}
+                theme={theme}
+              />
+            ) : streamIsMinimized ? null : streamLoadingDetail && !activeStreamBhajan ? (
               <View style={styles.inlineRow}>
                 <ActivityIndicator color={theme.accent} />
                 <Text style={[styles.statusText, { color: theme.textMuted }]}>
@@ -2138,22 +2161,6 @@ export default function App() {
                   </View>
                 )}
               </View>
-            ) : streamPlayback.kind === 'youtube' ? (
-              <MobileYouTubePlayer
-                ref={ytStreamRef}
-                videoId={streamPlayback.videoId}
-                title={streamPreferredRec?.label || activeStreamEntry.title}
-                startSec={streamPreferredRec?.startSec}
-                endSec={streamPreferredRec?.endSec}
-                embeddable={streamPlayback.embeddable}
-                autoPlay={streamAutoPlay}
-                onMediaModeChange={streamMediaMode === 'video' ? handleMediaModeChange : undefined}
-                onPlayStateChange={setStreamYtPlaying}
-                onEnded={() => {
-                  if (streamAutoPlay) advanceStream(1);
-                }}
-                theme={theme}
-              />
             ) : (
               <Text style={[styles.statusText, { color: theme.textMuted }]}>
                 {streamPlayback.kind === 'none'
@@ -2369,10 +2376,23 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 8,
   },
+  miniDockCardWithVideo: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 10,
+  },
   miniDockRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
+  },
+  miniDockVideoCol: {
+    flex: 1,
+    minWidth: 0,
     gap: 8,
   },
   miniKicker: {
@@ -2385,6 +2405,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  miniControlsWrap: {
+    flexWrap: 'wrap',
   },
   miniIconBtn: {
     borderWidth: 1,

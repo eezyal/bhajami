@@ -17,6 +17,7 @@ export interface YouTubeSegmentPlayerProps {
   embeddable?: boolean;
   playbackRate?: number;
   autoPlay?: boolean;
+  minimized?: boolean;
   onMediaModeChange?: (next: StreamMediaMode) => void;
   onEnded?: () => void;
   onPlayStateChange?: (playing: boolean) => void;
@@ -142,6 +143,7 @@ export const YouTubeSegmentPlayer = forwardRef<
     embeddable = true,
     playbackRate = 1.0,
     autoPlay = false,
+    minimized = false,
     onMediaModeChange,
     onEnded,
     onPlayStateChange,
@@ -332,37 +334,39 @@ export const YouTubeSegmentPlayer = forwardRef<
       : null;
 
   return (
-    <div className="yt-player-shell">
+    <div className={minimized ? 'yt-player-shell yt-player-shell-mini' : 'yt-player-shell'}>
       <div
         ref={hostRef}
-        className="yt-player-frame"
+        className={minimized ? 'yt-player-frame-mini' : 'yt-player-frame'}
         aria-label={`YouTube player for ${title}`}
       />
-      <div className="yt-player-meta">
-        <span>
-          {chapterSpan ? `${chapterSpan} · ` : ''}
-          YouTube Speed: {appliedRate.toFixed(2)}x
-        </span>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-          {onMediaModeChange && (
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => onMediaModeChange('audio')}
+      {!minimized && (
+        <div className="yt-player-meta">
+          <span>
+            {chapterSpan ? `${chapterSpan} · ` : ''}
+            YouTube Speed: {appliedRate.toFixed(2)}x
+          </span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            {onMediaModeChange && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => onMediaModeChange('audio')}
+              >
+                Switch to Audio
+              </button>
+            )}
+            <a
+              href={watchUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: 'var(--accent)', fontWeight: 600 }}
             >
-              Switch to Audio
-            </button>
-          )}
-          <a
-            href={watchUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: 'var(--accent)', fontWeight: 600 }}
-          >
-            Watch on YouTube
-          </a>
+              Watch on YouTube
+            </a>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 });
