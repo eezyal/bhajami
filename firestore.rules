@@ -28,9 +28,9 @@ rules_version = '2';
 //   - notesRange: string | null (optional, <= 120)
 //   - meaning: string | null (optional, <= 5000)
 //   - sheetMusicUrl / sourceUrl: string | null (optional, '' or http(s) URL <= 500)
-//   - metadataSource: string (optional, ['sairhythms_verified', 'local_inferred',
-//       'community_contributed', 'youtube_prasanthi_mandir_live',
-//       'youtube_sss_bhajans', 'admin_curated'])
+//   - metadataSource: string | null (optional, ['sairhythms_verified',
+//       'sssmediacentre_verified', 'local_inferred', 'community_contributed',
+//       'youtube_prasanthi_mandir_live', 'youtube_sss_bhajans', 'admin_curated'])
 //   - isEstimated / lyricsMissing: bool (optional)
 //   - matchStatus: string | null (optional, ['verified', 'needs_verification', 'unmatched'])
 //   - matchCandidates: list | null (optional, <= 10 maps)
@@ -40,7 +40,9 @@ rules_version = '2';
 //   - glossary: list (optional, <= 100 maps)
 //   - recordings: list (optional, <= 150 maps)
 //   - addedRecordings: list | null (optional, <= 150 maps)
+//   - defaultRecordingId: string | null (optional, <= 120)
 //   - bhajamiOverride / bhajamiNewBhajan: bool | null (optional)
+//   - crawledAt: timestamp | ISO string | null (optional)
 //   - createdAt: timestamp | ISO string (optional, immutable once set)
 //   - updatedAt: timestamp | ISO string (optional)
 //
@@ -239,7 +241,8 @@ service cloud.firestore {
     function isAdmin() {
       return request.auth != null &&
         (request.auth.token.admin == true ||
-         (request.auth.token.email == 'pschax@gmail.com' &&
+         (request.auth.token.email is string &&
+          request.auth.token.email.lower() == 'pschax@gmail.com' &&
           request.auth.token.email_verified == true));
     }
 
@@ -335,10 +338,11 @@ service cloud.firestore {
           data.sheetMusicUrl == '' || isValidUrl(data.sheetMusicUrl)) &&
         (!('sourceUrl' in data) || data.sourceUrl == null ||
           data.sourceUrl == '' || isValidUrl(data.sourceUrl)) &&
-        (!('metadataSource' in data) ||
+        (!('metadataSource' in data) || data.metadataSource == null ||
           (data.metadataSource is string &&
            data.metadataSource in [
              'sairhythms_verified',
+             'sssmediacentre_verified',
              'local_inferred',
              'community_contributed',
              'youtube_prasanthi_mandir_live',
@@ -371,10 +375,12 @@ service cloud.firestore {
         (!('addedRecordings' in data) || data.addedRecordings == null ||
           (data.addedRecordings is list && data.addedRecordings.size() <= 150 &&
            (data.addedRecordings.size() == 0 || data.addedRecordings[0] is map))) &&
+        isOptionalNullableString(data, 'defaultRecordingId', 0, 120) &&
         (!('bhajamiOverride' in data) || data.bhajamiOverride == null ||
           data.bhajamiOverride is bool) &&
         (!('bhajamiNewBhajan' in data) || data.bhajamiNewBhajan == null ||
           data.bhajamiNewBhajan is bool) &&
+        (!('crawledAt' in data) || data.crawledAt == null || isValidTimestampOrIso(data.crawledAt)) &&
         (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt)) &&
         (!('updatedAt' in data) || isValidTimestampOrIso(data.updatedAt));
     }
