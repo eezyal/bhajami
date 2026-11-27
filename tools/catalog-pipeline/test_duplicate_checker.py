@@ -21,6 +21,8 @@ def _make_doc(
     recordings: list[dict] | None = None,
     slug_aliases: list[str] | None = None,
     bhajami_override: bool = False,
+    raga_name: str | None = None,
+    track_type: str | None = None,
 ) -> dict:
     return {
         "id": doc_id,
@@ -28,6 +30,8 @@ def _make_doc(
         "title": title,
         "metadataSource": metadata_source,
         "bhajamiOverride": bhajami_override,
+        **({"raga": {"name": raga_name}} if raga_name else {}),
+        **({"trackType": track_type} if track_type else {}),
         "lyricsSets": (
             [{"language": "Roman", "script": "roman", "lines": lines}] if lines else []
         ),
@@ -195,6 +199,63 @@ class DuplicateCheckerTests(unittest.TestCase):
         self.assertEqual(by_src.get("durga-sssmc"), ["durga-bhavani-ma-jaya-jaya"])
         self.assertEqual(by_src.get("yt_stub_empty"), ["durga-bhavani-ma-jaya-jaya"])
         self.assertEqual(report["flaggedPairs"], 2)
+
+    def test_clearance_log_vetoes_different_raga_namavali_vs_stanza_and_generic_karaoke(self) -> None:
+        shared_lines = [
+            "Gajavadana Gananatha Natha",
+            "Gowri Vara Tanaya Gunaalaya",
+            "Vidya Dayaka Buddhi Pradayaka",
+            "Siddhi Vinayaka Hey Shubha Dayaka",
+        ]
+        docs = [
+            # Same lyrics but distinct specific Ragas -> MUST be vetoed (never merged)
+            _make_doc(
+                "gajavadana-hamsanandi",
+                "Gajavadana Gananatha Natha",
+                raga_name="Hamsanandi",
+                lines=shared_lines,
+            ),
+            _make_doc(
+                "gajavadana-shankarabharanam",
+                "Gajavadana Gananatha Natha",
+                raga_name="Shankarabharanam",
+                lines=shared_lines,
+            ),
+            # 1-line namavali vs multi-stanza bhajan -> MUST be vetoed
+            _make_doc(
+                "rama-lakshmana-1line",
+                "Rama Lakshmana Janaki Jai Bolo",
+                lines=["Rama Lakshmana Janaki Jai Bolo Hanuman Ki"],
+            ),
+            _make_doc(
+                "rama-lakshmana-multi",
+                "Rama Lakshmana Janaki Jai Bolo",
+                lines=[
+                    "Rama Lakshmana Janaki Jai Bolo Hanuman Ki",
+                    "Jai Bolo Hanuman Ki Siyavara Ramachandra Ki",
+                    "Pavana Tanaya Sankata Harana Mangala Murti Roop",
+                    "Ram Lakhan Sita Sahita Hriday Basahu Sura Bhoop",
+                ],
+            ),
+            # Generic Karaoke stubs or special trackTypes -> MUST never collide
+            _make_doc("k1", "Karaoke", metadata_source="youtube_sss_bhajans"),
+            _make_doc("k2", "Karaoke", metadata_source="youtube_sss_bhajans"),
+            _make_doc(
+                "inst1",
+                "Om Namah Shivaya",
+                metadata_source="youtube_sss_bhajans",
+                track_type="instrumental",
+            ),
+            _make_doc(
+                "vocal1",
+                "Om Namah Shivaya",
+                metadata_source="sairhythms_verified",
+            ),
+        ]
+
+        report = dc.scan_catalog_duplicates(docs, min_score=0.78)
+        self.assertEqual(report["flaggedPairs"], 0)
+        self.assertGreaterEqual(report["vetoedDifferentLyrics"], 2)
 
 
 if __name__ == "__main__":

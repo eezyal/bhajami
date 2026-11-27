@@ -60,7 +60,44 @@ ISO_DURATION_RE = re.compile(
 
 TIMESTAMP_TOKEN_RE = re.compile(r"(?<!\d)(\d{1,2}:[0-5]\d(?::[0-5]\d)?)(?!\d)")
 
-LYRICS_MARKER_RE = re.compile(r"^\s*lyrics\s*[-–:]\s*(.*)$", re.I)
+LYRICS_MARKER_RE = re.compile(
+    r"^\s*(?:[^\w\n]{0,4}\s*)?(?:(?:song|bhajan)\s+)?lyrics(?:\s*[:\-–—]+\s*(.*)|\s*$)",
+    re.I,
+)
+
+KARAOKE_TEXT_RE = re.compile(r"\bkaraoke\b", re.I)
+
+INSTRUMENTAL_TEXT_RE = re.compile(
+    r"\b(?:instrumental|nadasudha|nada\s+sudha|on\s+veena|veena\s+(?:\w+\s+){0,2}bhajans?|"
+    r"violin\s+instrumental|flute\s+instrumental|sitar\s+instrumental|"
+    r"guitar\s+instrumental|piano\s+instrumental|keyboard\s+instrumental|"
+    r"soothing\s+instrumental|fusion\s+instrumental)\b",
+    re.I,
+)
+
+SPECIAL_TRACK_RE = re.compile(
+    r"\b(?:sama\s*[-–]\s*\d+|episode\s*[-–]?\s*\d+|ramayana\s+through\s+sai\s+bhajans|"
+    r"100\s+million\s+views|channel\s+launching|global\s+akhanda\s+bhajan|"
+    r"story\s+of\s+the\s+vibhuti\s+mantra|conversation\s+with|milestone|"
+    r"who\s+is\s+sri\s+sathya\s+sai|fusion)\b",
+    re.I,
+)
+
+_SAMA_SEGMENT_RE = re.compile(r"^sama\s*[-–:]?\s*(\d+)$", re.I)
+
+_GENERIC_SEGMENT_RE = re.compile(
+    r"^(?:"
+    r"karaoke|instrumental|soothing\s+instrumental|fusion|must\s+listen|new|hd|4k|live|audio|video|"
+    r"part\s*[-–:]?\s*\d+|sama\s*[-–:]?\s*\d+|milestone|"
+    r"must\s+hear(?:\s+.*)?|a\s+new\s+video\s+offering|"
+    r"(?:sri\s+sathya\s+sai|radio\s+sai|prasanthi\s+mandir\s+live)\s+bhajans?.*|"
+    r"sai\s+kulwant\s+hall|devotional\s+songs?|mystik\s+vibes|"
+    r"baba\s+sings.*|nadasudha(?:\s*#?\d+)?|"
+    r"shiva\s+bhajans\s+on\s+veena|instrumental\s+veena.*|"
+    r".*\bspecial(?:\s+offering)?$"
+    r")$",
+    re.I,
+)
 
 FOOTER_STOP_RE = re.compile(
     r"(?:https?://|www\.|radio\s*sai|sri\s+sathya\s+sai\s+media\s+centre|follow\s+us|subscribe\s+(?:to|now)|"
@@ -146,7 +183,8 @@ def extract_mandir_lyrics(description: str | None) -> list[str]:
     for idx, raw_line in enumerate(raw_lines):
         m = LYRICS_MARKER_RE.match(raw_line.strip())
         if m:
-            candidate_lines = [m.group(1).strip(), *raw_lines[idx + 1 :]]
+            first_tail = (m.group(1) or "").strip()
+            candidate_lines = ([first_tail] if first_tail else []) + raw_lines[idx + 1 :]
             collected = strip_youtube_lyrics_footer(candidate_lines)
             return collected if len(collected) >= 2 else []
     return []
@@ -222,17 +260,95 @@ def parse_description_chapters(
     return non_structural, all_markers
 
 
-def clean_youtube_display_title(raw_title: str) -> str:
-    """Produce a clean UI bhajan title by stripping leading numbers and pipe/tag suffixes."""
-    sanitized = phonetics.sanitize_title(raw_title or "")
-    candidate = sanitized or str(raw_title or "").strip()
-    if "|" in candidate:
-        head = candidate.split("|", 1)[0].strip()
-        if len(head) >= 3:
-            candidate = head
-    candidate = re.sub(r"^\s*\d{1,5}\s*[-–—:.|)]\s*", "", candidate)
-    candidate = re.sub(r"^[\s|–—-]+|[\s|–—-]+$", "", candidate)
-    return re.sub(r"\s+", " ", candidate).strip()
+def classify_track_type(
+    raw_title: str,
+    raw_description: str = "",
+    recording_labels: str = "",
+) -> str:
+    """Classify a catalog record as `'karaoke'`, `'instrumental'`, `'special'`, or `'bhajan'`."""
+    desc_head = "\n".join((raw_description or "").splitlines()[:4])
+    primary = f"{raw_title or ''} {recording_labels or ''}".strip()
+    combined = f"{primary} {desc_head}".strip()
+    if KARAOKE_TEXT_RE.search(combined):
+        return "karaoke"
+    if INSTRUMENTAL_TEXT_RE.search(combined):
+        return "instrumental"
+    if SPECIAL_TRACK_RE.search(primary):
+        return "special"
+    return "bhajan"
+
+
+def _extract_song_title_from_description(raw_description: str) -> str:
+    if not raw_description:
+        return ""
+    for line in raw_description.splitlines()[:10]:
+        cleaned = re.sub(r"\s+", " ", line).strip()
+        if not cleaned or FOOTER_STOP_RE.search(cleaned) or PURE_HASHTAGS_RE.match(cleaned):
+            continue
+        m = re.match(r"^(?:song|bhajan|title|stotra|hymn)\s*[-–:]\s*(.+)$", cleaned, re.I)
+        if m:
+            cand = m.group(1).strip()
+            if cand and not _GENERIC_SEGMENT_RE.match(cand):
+                return cand
+    return ""
+
+
+def clean_youtube_display_title(
+    raw_title: str,
+    raw_description: str = "",
+    *,
+    track_type: str | None = None,
+) -> str:
+    """Extract the real bhajan/hymn title across pipe segments, avoiding generic tags like `Karaoke`."""
+    raw = re.sub(r"\s+", " ", str(raw_title or "")).strip()
+    resolved_type = track_type or classify_track_type(raw, raw_description)
+
+    sama_tag = ""
+    picked = ""
+    if "|" in raw:
+        parts = [re.sub(r"^\s*\d{1,5}\s*[-–—:.|)]\s*", "", seg).strip() for seg in raw.split("|")]
+        for part in parts:
+            if not part:
+                continue
+            sm = _SAMA_SEGMENT_RE.match(part)
+            if sm and not sama_tag:
+                sama_tag = f"SAMA - {sm.group(1)}"
+                continue
+            if _GENERIC_SEGMENT_RE.match(part):
+                continue
+            # Also strip known trailing channel/special suffixes inside a compound segment
+            cand = phonetics.sanitize_title(part) or part
+            cand = re.sub(r"^[\s|–—-]+|[\s|–—-]+$", "", cand).strip()
+            if len(cand) >= 3 and not _GENERIC_SEGMENT_RE.match(cand):
+                picked = cand
+                break
+
+    if not picked:
+        sanitized = phonetics.sanitize_title(raw)
+        base = sanitized or raw
+        if "|" in base:
+            base = base.split("|", 1)[0].strip()
+        base = re.sub(r"^\s*\d{1,5}\s*[-–—:.|)]\s*", "", base)
+        base = re.sub(r"^[\s|–—-]+|[\s|–—-]+$", "", base)
+        base = re.sub(r"\s+", " ", base).strip()
+        if base and not _GENERIC_SEGMENT_RE.match(base) and len(base) >= 3:
+            picked = base
+
+    if not picked:
+        picked = _extract_song_title_from_description(raw_description)
+
+    if not picked:
+        return re.sub(r"\s+", " ", re.sub(r"^\s*\d{1,5}\s*[-–—:.|)]\s*", "", raw)).strip()
+
+    # Keep vocal fusion / instrumental / karaoke qualifiers clear so tracks never masquerade as standard vocals
+    if resolved_type == "karaoke" and not KARAOKE_TEXT_RE.search(picked):
+        picked = f"{picked} (Karaoke)"
+    elif resolved_type == "instrumental" and not INSTRUMENTAL_TEXT_RE.search(picked):
+        picked = f"{picked} (Instrumental)"
+    elif resolved_type == "special" and sama_tag and "sama" not in picked.lower():
+        picked = f"{picked} ({sama_tag})"
+
+    return re.sub(r"\s+", " ", picked).strip()
 
 
 def classify_youtube_video(
@@ -240,7 +356,7 @@ def classify_youtube_video(
     raw_description: str,
     duration_sec: int,
 ) -> dict[str, Any]:
-    """Classify a YouTube video as `single`, `volume`, or `ambiguous_long`."""
+    """Classify a YouTube video as `single`, `volume`, or `ambiguous_long`, plus `trackType`."""
     non_structural, all_markers = parse_description_chapters(raw_description, duration_sec)
     is_volume = bool(VOLUME_TITLE_RE.search(raw_title or "")) or len(non_structural) >= 2
     if is_volume:
@@ -250,13 +366,18 @@ def classify_youtube_video(
     else:
         classification = "single"
 
-    cleaned_title = clean_youtube_display_title(raw_title or "") or (raw_title or "").strip()
+    track_type = classify_track_type(raw_title or "", raw_description or "")
+    cleaned_title = (
+        clean_youtube_display_title(raw_title or "", raw_description or "", track_type=track_type)
+        or (raw_title or "").strip()
+    )
     return {
         "classification": classification,
+        "trackType": track_type,
         "cleanedTitle": cleaned_title,
         "chapters": [
             {
-                "title": clean_youtube_display_title(c["title"]) or c["title"],
+                "title": clean_youtube_display_title(c["title"], track_type="bhajan") or c["title"],
                 "startSec": int(c["startSec"]),
                 "endSec": int(c["endSec"]),
             }
@@ -406,6 +527,7 @@ def _build_unmatched_youtube_bhajan(
     match_status: str,
     match_candidates: list[dict[str, Any]],
     now_iso: str,
+    track_type: str = "bhajan",
 ) -> dict[str, Any]:
     vid = str(video["videoId"])
     bhajan_id = f"yt_{vid}"
@@ -419,6 +541,7 @@ def _build_unmatched_youtube_bhajan(
                 "lines": lyrics,
             }
         )
+    lyrics_missing = False if track_type in ("instrumental", "karaoke") else (len(lyrics_sets) == 0)
     doc: dict[str, Any] = {
         "id": bhajan_id,
         "slug": f"yt-{vid.lower()}",
@@ -439,7 +562,8 @@ def _build_unmatched_youtube_bhajan(
         "sheetMusicUrl": None,
         "sourceUrl": f"https://www.youtube.com/watch?v={vid}",
         "metadataSource": collection,
-        "lyricsMissing": len(lyrics_sets) == 0,
+        **({"trackType": track_type} if track_type != "bhajan" else {}),
+        "lyricsMissing": lyrics_missing,
         "matchStatus": match_status,
         "matchCandidates": match_candidates[:3],
         "createdAt": now_iso,
@@ -656,15 +780,58 @@ def process_youtube_videos(
             continue
 
         lyrics = extract_mandir_lyrics(str(video.get("rawDescription") or ""))
-        shortlist = cand_index.shortlist(cleaned_title, entity_aliases=entity_aliases)
-        eval_res = phonetics.evaluate_match_candidate(
-            cleaned_title,
-            shortlist,
-            query_lyrics=lyrics,
-            query_id=f"yt_{vid}",
-            entity_aliases=entity_aliases,
-            do_not_merge_pairs=do_not_merge_pairs,
-        )
+        track_type = str(cls.get("trackType") or "bhajan")
+        raw_shortlist = cand_index.shortlist(cleaned_title, entity_aliases=entity_aliases)
+        # Only match regular vocal bhajans against other regular vocal bhajans
+        shortlist = [
+            c
+            for c in raw_shortlist
+            if str(c.get("trackType") or "bhajan") == "bhajan"
+            and classify_track_type(str(c.get("title") or "")) == "bhajan"
+        ]
+        if track_type != "bhajan":
+            eval_res: dict[str, Any] = {
+                "matchStatus": "verified",
+                "bestTargetId": None,
+                "bestScore": 1.0,
+                "reason": f"standalone_{track_type}",
+                "matchCandidates": [],
+            }
+        else:
+            eval_res = phonetics.evaluate_match_candidate(
+                cleaned_title,
+                shortlist,
+                query_lyrics=lyrics,
+                query_id=f"yt_{vid}",
+                entity_aliases=entity_aliases,
+                do_not_merge_pairs=do_not_merge_pairs,
+            )
+            # Guard against auto-merging a lyrics-less video when >= 2 catalog bhajans share that canonical title
+            if (
+                not lyrics
+                and eval_res.get("matchStatus") == "verified"
+                and eval_res.get("reason") != "entity_alias"
+            ):
+                q_canon = phonetics.canonicalize_phrase(cleaned_title)
+                same_title_cands = [
+                    c for c in shortlist if phonetics.canonicalize_phrase(str(c.get("title") or "")) == q_canon
+                ]
+                if len(same_title_cands) >= 2:
+                    eval_res = {
+                        **eval_res,
+                        "matchStatus": "needs_verification",
+                        "reason": "homonymous_title_no_lyrics",
+                        "matchCandidates": [
+                            {
+                                "targetBhajanId": str(c.get("id") or ""),
+                                "targetTitle": str(c.get("title") or ""),
+                                "score": float(eval_res.get("bestScore") or 1.0),
+                                "reason": "homonymous_title_no_lyrics",
+                            }
+                            for c in same_title_cands[:5]
+                        ],
+                    }
+
         best_score = float(eval_res.get("bestScore") or 0.0)
         match_method = str(eval_res.get("reason") or "title_similarity")
         rec_label_prefix = "Prasanthi Mandir Live" if source_key == "youtube_mandir_live" else "SSS Bhajans"
@@ -683,7 +850,12 @@ def process_youtube_videos(
         }
 
         linked_ids: list[str] = []
-        if classification == "single" and eval_res.get("matchStatus") == "verified" and eval_res.get("bestTargetId"):
+        if (
+            track_type == "bhajan"
+            and classification == "single"
+            and eval_res.get("matchStatus") == "verified"
+            and eval_res.get("bestTargetId")
+        ):
             target_id = str(eval_res["bestTargetId"])
             existing_target = bhajans_state.get(target_id)
             if existing_target is not None:
@@ -709,7 +881,12 @@ def process_youtube_videos(
             linked_ids.append(target_id)
         else:
             stub_id = f"yt_{vid}"
-            resolved_status = "needs_verification" if (classification == "ambiguous_long" or eval_res.get("matchStatus") == "needs_verification") else "unmatched"
+            if track_type != "bhajan":
+                resolved_status = "verified"
+            elif classification == "ambiguous_long" or eval_res.get("matchStatus") == "needs_verification":
+                resolved_status = "needs_verification"
+            else:
+                resolved_status = "unmatched"
             existing_stub = bhajans_state.get(stub_id)
             if existing_stub is not None and existing_stub.get("bhajamiOverride") is True:
                 bhajans_state[stub_id] = _merge_recording_into_bhajan(existing_stub, recording, ts_now)
@@ -725,6 +902,7 @@ def process_youtube_videos(
                     match_status=resolved_status,
                     match_candidates=list(eval_res.get("matchCandidates") or []),
                     now_iso=ts_now,
+                    track_type=track_type,
                 )
                 bhajans_state[stub_id] = stub_doc
                 if existing_stub is None:

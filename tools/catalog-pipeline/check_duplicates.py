@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -148,6 +149,54 @@ def choose_canonical_target(
     return (doc_a, doc_b) if id_a <= id_b else (doc_b, doc_a)
 
 
+_IGNORED_RAGA_KEYS = {
+    "",
+    "traditional",
+    "unspecified",
+    "pending sai rhythms sync",
+    "unknown",
+    "n/a",
+}
+
+_GENERIC_NON_BHAJAN_CANONICALS = {
+    "karaoke",
+    "instrumental",
+    "medley",
+    "special",
+    "sama",
+}
+
+
+def _normalize_raga_key(doc: Mapping[str, Any]) -> str:
+    raga = doc.get("raga")
+    raw = str(raga.get("name") if isinstance(raga, Mapping) else raga or "").strip()
+    if not raw:
+        return ""
+    cleaned = raw.lower()
+    cleaned = re.sub(r"^(?:raga|ragam)\s+", "", cleaned)
+    cleaned = re.sub(r"\s+(?:raga|ragam)$", "", cleaned)
+    cleaned = re.sub(r"[^a-z0-9\s]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return "" if cleaned in _IGNORED_RAGA_KEYS else cleaned
+
+
+def _are_ragas_compatible(raga_a: str, raga_b: str) -> bool:
+    if not raga_a or not raga_b:
+        return True
+    if raga_a == raga_b or raga_a in raga_b or raga_b in raga_a:
+        return True
+    ca = raga_a.replace(" ", "")
+    cb = raga_b.replace(" ", "")
+    if ca in cb or cb in ca:
+        return True
+    toks_a = [t for t in raga_a.split() if len(t) >= 3]
+    toks_b = [t for t in raga_b.split() if len(t) >= 3]
+    for ta in toks_a:
+        if any(phonetics.normalized_word_sim(ta, tb) >= 0.78 for tb in toks_b):
+            return True
+    return phonetics.compute_title_similarity(raga_a, raga_b) >= 0.72
+
+
 @dataclass(frozen=True)
 class PreparedBhajan:
     doc: Mapping[str, Any]
@@ -165,6 +214,8 @@ class PreparedBhajan:
     lyrics_tokens: frozenset[str]
     body_tokens: frozenset[str]
     is_instrumental: bool
+    track_type: str
+    raga_key: str
     slug_aliases: frozenset[str]
     recording_keys: frozenset[str]
     do_not_merge_with: frozenset[str]
@@ -220,6 +271,11 @@ def prepare_bhajan(doc: Mapping[str, Any]) -> PreparedBhajan | None:
         for r in (list(doc.get("recordings") or []) + list(doc.get("addedRecordings") or []))
         if isinstance(r, Mapping)
     )
+    explicit_track_type = str(doc.get("trackType") or "").strip().lower()
+    if explicit_track_type in ("bhajan", "instrumental", "karaoke", "special"):
+        track_type = explicit_track_type
+    else:
+        track_type = yt_sync.classify_track_type(raw_title, "", rec_labels)
     dnm_with = frozenset(str(x).strip() for x in (doc.get("doNotMergeWith") or []) if str(x).strip())
 
     return PreparedBhajan(
@@ -237,7 +293,10 @@ def prepare_bhajan(doc: Mapping[str, Any]) -> PreparedBhajan | None:
         lyrics_full_4grams=lyrics_full_4grams,
         lyrics_tokens=frozenset(lyrics_tokens_set),
         body_tokens=frozenset(body_tokens_set),
-        is_instrumental=sssmc._is_instrumental_text(f"{raw_title} {rec_labels}"),  # noqa: SLF001
+        is_instrumental=(track_type in ("instrumental", "karaoke"))
+        or sssmc._is_instrumental_text(f"{raw_title} {rec_labels}"),  # noqa: SLF001
+        track_type=track_type,
+        raga_key=_normalize_raga_key(doc),
         slug_aliases=aliases,
         recording_keys=rec_keys,
         do_not_merge_with=dnm_with,
@@ -386,7 +445,33 @@ def evaluate_duplicate_pair(
     if prep_a.is_instrumental != prep_b.is_instrumental:
         return {"status": "skip", "reason": "instrumental_vs_vocal"}
 
+    if prep_a.track_type != "bhajan" or prep_b.track_type != "bhajan":
+        return {"status": "skip", "reason": "non_bhajan_track_type"}
+
+    if (
+        prep_a.canonical in _GENERIC_NON_BHAJAN_CANONICALS
+        or prep_b.canonical in _GENERIC_NON_BHAJAN_CANONICALS
+    ):
+        return {"status": "skip", "reason": "generic_non_bhajan_title"}
+
     shared_recording = bool(prep_a.recording_keys & prep_b.recording_keys)
+
+    if not shared_recording and not _are_ragas_compatible(prep_a.raga_key, prep_b.raga_key):
+        return {
+            "status": "vetoed",
+            "reason": "different_raga",
+            "ragaA": prep_a.raga_key,
+            "ragaB": prep_b.raga_key,
+        }
+
+    if not shared_recording and (
+        (len(prep_a.roman_lines) == 1 and len(prep_b.roman_lines) >= 3)
+        or (len(prep_b.roman_lines) == 1 and len(prep_a.roman_lines) >= 3)
+    ):
+        return {
+            "status": "vetoed",
+            "reason": "namavali_vs_multi_stanza",
+        }
     same_canon_or_fl = bool(
         (prep_a.canonical and prep_a.canonical == prep_b.canonical)
         or (prep_a.first_line_canon and prep_a.first_line_canon == prep_b.canonical)

@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   canonicalizePhrase,
   getMissingBhajanFields,
+  isSpecialOrInstrumentalTrack,
   makeDoNotMergeKey,
   parsePitchStringOptional,
   type Bhajan,
@@ -377,7 +378,9 @@ function filterBhajansByView(
 ): Bhajan[] {
   if (view === 'missing_lyrics') {
     return bhajans.filter(
-      (b) => b.lyricsMissing === true || getMissingBhajanFields(b).includes('lyrics'),
+      (b) =>
+        !isSpecialOrInstrumentalTrack(b) &&
+        (b.lyricsMissing === true || getMissingBhajanFields(b).includes('lyrics')),
     );
   }
   if (view === 'needs_verification') {
@@ -972,15 +975,27 @@ export async function listCurationView(params: {
         }
       }
 
-      const snap = await query.limit(safeLimit + 1).get();
-      const docs = snap.docs.slice(0, safeLimit);
-      const items = docs.map((doc) => parseBhajanRecord(doc.id, doc.data()));
-      const nextCursor = snap.docs.length > safeLimit ? docs[docs.length - 1].id : null;
+      const fetchLimit =
+        params.view === 'missing_lyrics' ? Math.min(100, safeLimit * 3) : safeLimit + 1;
+      const snap = await query.limit(fetchLimit).get();
+      let rawDocs = snap.docs;
+      let items = rawDocs.map((doc) => parseBhajanRecord(doc.id, doc.data()));
+      if (params.view === 'missing_lyrics') {
+        const filteredPairs = rawDocs
+          .map((doc, idx) => ({ doc, item: items[idx] }))
+          .filter(({ item }) => !isSpecialOrInstrumentalTrack(item));
+        rawDocs = filteredPairs.map((p) => p.doc);
+        items = filteredPairs.map((p) => p.item);
+      }
+      const hasMore = items.length > safeLimit;
+      const pagedDocs = rawDocs.slice(0, safeLimit);
+      const pagedItems = items.slice(0, safeLimit);
+      const nextCursor = hasMore && pagedDocs.length > 0 ? pagedDocs[pagedDocs.length - 1].id : null;
       return {
         view: params.view,
-        items,
+        items: pagedItems,
         nextCursor,
-        totalMatching: items.length,
+        totalMatching: pagedItems.length,
       };
     }
 
@@ -1080,6 +1095,8 @@ export async function listCurationView(params: {
         ? { booleanValue: true }
         : { stringValue: 'needs_verification' };
 
+    const fetchLimit =
+      params.view === 'missing_lyrics' ? Math.min(100, safeLimit * 3) : safeLimit;
     let rows: Array<{ id: string; fields: Record<string, unknown> }>;
     try {
       rows = await restRunQuery(
@@ -1093,7 +1110,7 @@ export async function listCurationView(params: {
             },
           },
           orderBy: [{ field: { fieldPath: 'updatedAt' }, direction: 'DESCENDING' }],
-          limit: safeLimit,
+          limit: fetchLimit,
         },
         idToken,
       );
@@ -1108,14 +1125,17 @@ export async function listCurationView(params: {
               value: filterValue,
             },
           },
-          limit: safeLimit,
+          limit: fetchLimit,
         },
         idToken,
       );
     }
 
-    const items = rows
-      .map((r) => parseBhajanRecord(r.id, r.fields))
+    let items = rows.map((r) => parseBhajanRecord(r.id, r.fields));
+    if (params.view === 'missing_lyrics') {
+      items = items.filter((b) => !isSpecialOrInstrumentalTrack(b));
+    }
+    items = items
       .sort((a, b) => ((a.updatedAt || '') < (b.updatedAt || '') ? 1 : -1))
       .slice(0, safeLimit);
 

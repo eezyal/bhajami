@@ -369,6 +369,139 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         override_dirty = {**dirty_doc, "bhajamiOverride": True}
         self.assertIsNone(norm.normalize_bhajan_doc("yt_-AbRphrr8AM", override_dirty, now_iso="2026-11-26T16:46:00Z"))
 
+    def test_special_track_classification_title_extraction_and_homonymous_guard(self) -> None:
+        import classify_special_tracks as cst
+        import index_builder
+
+        self.assertEqual(
+            yt.classify_track_type("Karaoke | SAMA - 01 | Sri Guru Paduka Stotram | Guru Purnima Special"),
+            "karaoke",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("Karaoke | SAMA - 01 | Sri Guru Paduka Stotram | Guru Purnima Special"),
+            "Sri Guru Paduka Stotram (Karaoke)",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("Karaoke | SAMA - 04 | Why Fear When I Am Here | 94th Birthday Special"),
+            "Why Fear When I Am Here (Karaoke)",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("SAMA - 02 | Sri Krishnashtakam | Sri Krishna Janmashtami Special"),
+            "Sri Krishnashtakam (SAMA - 02)",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("702 - Pranamami Sri Durge | Soothing Instrumental | Sri Sathya Sai Bhajans"),
+            "Pranamami Sri Durge (Instrumental)",
+        )
+        self.assertEqual(
+            yt.clean_youtube_display_title("1617 - Must Hear Soothing Krishna Bhajan | Yadunandana Yashoda Bala Fusion | Sri Sathya Sai Bhajans"),
+            "Yadunandana Yashoda Bala Fusion",
+        )
+        self.assertEqual(
+            yt.classify_track_type("1710 - Manasa Bhajare Guru Charanam Sai Charanam Pranamamyaham Unplugged | Ladies Day Special"),
+            "bhajan",
+        )
+
+        # Lyrics heading without dash/colon should still extract cleanly
+        desc_no_dash = "\n".join(
+            [
+                "Lyrics",
+                "Gajavadana Gananatha Natha",
+                "Gowri Vara Tanaya Gunaalaya",
+                "Subscribe to Sri Sathya Sai Bhajans",
+            ]
+        )
+        self.assertEqual(
+            yt.extract_mandir_lyrics(desc_no_dash),
+            ["Gajavadana Gananatha Natha", "Gowri Vara Tanaya Gunaalaya"],
+        )
+
+        # Karaoke/instrumental videos never merge into vocal bhajans, and homonymous no-lyrics videos route to doubt
+        cands = [
+            *self.candidates,
+            {"id": "rama-rama-a", "title": "Rama Rama Rama Sita", "lyricsLines": ["Rama Rama Rama Sita", "Verse A"]},
+            {"id": "rama-rama-b", "title": "Rama Rama Rama Sita", "lyricsLines": ["Rama Rama Rama Sita", "Verse B"]},
+        ]
+        res = yt.process_youtube_videos(
+            [
+                {
+                    "videoId": "karVid1",
+                    "rawTitle": "Karaoke | SAMA - 03 | Sri Ganashtakam | Ganesh Chaturthi Special",
+                    "rawDescription": "",
+                    "durationSec": 210,
+                    "publishedAt": "2026-11-26T00:00:00Z",
+                },
+                {
+                    "videoId": "veenaVid1",
+                    "rawTitle": "Aao Aao Nandalala | Instrumental Veena Devi Bhajans | Nadasudha #2",
+                    "rawDescription": "",
+                    "durationSec": 200,
+                    "publishedAt": "2026-11-26T00:00:00Z",
+                },
+                {
+                    "videoId": "homNoLyrics1",
+                    "rawTitle": "Rama Rama Rama Sita | Sri Sathya Sai Bhajans",
+                    "rawDescription": "",
+                    "durationSec": 180,
+                    "publishedAt": "2026-11-26T00:00:00Z",
+                },
+            ],
+            cands,
+            now_iso="2026-11-27T00:00:00Z",
+        )
+        kar_doc = res["createdBhajans"]["yt_karVid1"]
+        self.assertEqual(kar_doc["trackType"], "karaoke")
+        self.assertEqual(kar_doc["title"], "Sri Ganashtakam (Karaoke)")
+        self.assertFalse(kar_doc["lyricsMissing"])
+        self.assertEqual(kar_doc["matchStatus"], "verified")
+
+        veena_doc = res["createdBhajans"]["yt_veenaVid1"]
+        self.assertEqual(veena_doc["trackType"], "instrumental")
+        self.assertEqual(veena_doc["title"], "Aao Aao Nandalala (Instrumental)")
+        self.assertFalse(veena_doc["lyricsMissing"])
+        self.assertEqual(veena_doc["matchStatus"], "verified")
+
+        # Vocal homonymous video without lyrics must NOT auto-merge blindly into rama-rama-a
+        hom_doc = res["createdBhajans"]["yt_homNoLyrics1"]
+        self.assertEqual(hom_doc["matchStatus"], "needs_verification")
+        self.assertEqual(len(hom_doc["matchCandidates"]), 2)
+
+        # Backfill helper extracts real Karaoke title + clears missing_lyrics + stats exclude special tracks
+        classified = cst.classify_catalog_special_tracks(
+            [
+                {
+                    "id": "k_old",
+                    "slug": "k-old",
+                    "title": "Karaoke",
+                    "lyricsMissing": True,
+                    "matchStatus": "needs_verification",
+                    "matchCandidates": [{"targetBhajanId": "other"}],
+                    "recordings": [{"id": "yt_ceVC", "youtubeVideoId": "ceVCslIOaoM", "label": "SSS Bhajans: Karaoke"}],
+                }
+            ],
+            youtube_meta_by_vid={
+                "ceVCslIOaoM": {
+                    "rawTitle": "Karaoke | SAMA - 03 | Sri Ganashtakam| Ganesh Chaturthi Special",
+                    "rawDescription": "",
+                }
+            },
+            now_iso="2026-11-27T00:00:00Z",
+        )
+        self.assertEqual(classified["counts"]["karaoke"], 1)
+        self.assertEqual(classified["patches"]["k_old"]["title"], "Sri Ganashtakam (Karaoke)")
+        self.assertEqual(classified["patches"]["k_old"]["trackType"], "karaoke")
+        self.assertFalse(classified["patches"]["k_old"]["lyricsMissing"])
+        self.assertEqual(classified["patches"]["k_old"]["matchCandidates"], [])
+
+        stats = index_builder.compute_catalog_stats(
+            [
+                kar_doc,
+                veena_doc,
+                {"id": "real_missing", "title": "Real Vocal Bhajan", "lyricsMissing": True, "recordings": []},
+            ]
+        )
+        self.assertEqual(stats["missingLyricsCount"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

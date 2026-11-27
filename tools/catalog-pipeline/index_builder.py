@@ -89,6 +89,14 @@ def _resolve_title(bhajan: Mapping[str, Any], *, metadata_source: str = "") -> s
     return re.sub(r"[-_]+", " ", slug).strip().title()
 
 
+def _resolve_track_type(bhajan: Mapping[str, Any], *, title: str, recs: Sequence[Mapping[str, Any]]) -> str:
+    explicit = str(bhajan.get("trackType") or "").strip().lower()
+    if explicit in ("bhajan", "instrumental", "karaoke", "special"):
+        return explicit
+    rec_labels = " ".join(str(r.get("label") or "") for r in recs if isinstance(r, Mapping))
+    return yt_sync.classify_track_type(title, "", rec_labels)
+
+
 def project_bhajan_to_index_entry(
     bhajan: Mapping[str, Any],
     *,
@@ -141,6 +149,7 @@ def project_bhajan_to_index_entry(
         lyrics_missing = ("lyrics" in missing_fields)
 
     all_recs = list(bhajan.get("recordings") or []) + list(bhajan.get("addedRecordings") or [])
+    track_type = _resolve_track_type(bhajan, title=title, recs=all_recs)
     recording_count = len(all_recs)
     if recording_count == 0 and str(bhajan.get("youtubeId") or "").strip():
         recording_count = 1
@@ -164,6 +173,8 @@ def project_bhajan_to_index_entry(
         "hasDirectAudio": has_direct_audio,
         "metadataSource": metadata_source,
     }
+    if track_type != "bhajan":
+        entry["trackType"] = track_type
     if deity:
         entry["deity"] = deity
     if language:
@@ -197,12 +208,14 @@ def compute_catalog_stats(bhajans: Iterable[Mapping[str, Any]]) -> dict[str, Any
     for item in items:
         if item.get("metadataSource") == "sairhythms_verified":
             verified += 1
+        recs = list(item.get("recordings") or []) + list(item.get("addedRecordings") or [])
+        item_title = str(item.get("title") or "")
+        track_type = _resolve_track_type(item, title=item_title, recs=recs)
         missing = item.get("missingFields") or crawler.compute_missing_bhajan_fields(item)
-        if bool(item.get("lyricsMissing")) or ("lyrics" in missing):
+        if track_type == "bhajan" and (bool(item.get("lyricsMissing")) or ("lyrics" in missing)):
             missing_lyrics += 1
         if item.get("matchStatus") == "needs_verification":
             needs_verification += 1
-        recs = list(item.get("recordings") or []) + list(item.get("addedRecordings") or [])
         for rec in recs:
             coll = str(rec.get("collection") or "")
             if coll == "sssmediacentre_bhajan_a_day":

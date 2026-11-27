@@ -706,6 +706,7 @@ function projectBhajanToIndexEntry(bhajan: Bhajan): BhajanIndexEntry {
     missingFields: bhajan.missingFields ?? getMissingBhajanFields(bhajan),
     recordingCount: bhajan.recordings?.length ?? 0,
     metadataSource: bhajan.metadataSource,
+    ...(bhajan.trackType ? { trackType: bhajan.trackType } : {}),
     slugAliases: bhajan.slugAliases,
     updatedAt: bhajan.updatedAt,
   };

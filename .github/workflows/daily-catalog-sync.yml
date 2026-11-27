@@ -45,6 +45,11 @@ on:
         required: false
         default: true
         type: boolean
+      classify_special_tracks:
+        description: 'Classify instrumental/karaoke/special tracks & repair truncated YouTube titles'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: daily-catalog-sync
@@ -102,6 +107,7 @@ jobs:
           RUN_SSSMC: ${{ inputs.run_sssmediacentre || 'false' }}
           MAX_SSSMC_ITEMS: ${{ inputs.max_sssmediacentre_items || '200' }}
           RUN_DUPLICATE_CHECK: ${{ inputs.run_duplicate_check || 'true' }}
+          CLASSIFY_SPECIAL_TRACKS: ${{ inputs.classify_special_tracks || 'false' }}
         run: |
           if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
             echo "FIREBASE_SERVICE_ACCOUNT_JSON secret not configured; skipping cloud sync steps."
@@ -161,6 +167,14 @@ jobs:
               --max-items-per-run "$MAX_SSSMC_ITEMS" \
               --publish-firestore \
               --max-firestore-writes 4000
+          fi
+
+          if [ "$CLASSIFY_SPECIAL_TRACKS" = "true" ]; then
+            echo "Classifying instrumental/karaoke/special tracks & repairing truncated YouTube titles..."
+            python3 tools/catalog-pipeline/classify_special_tracks.py \
+              --source firestore \
+              --publish-firestore \
+              --max-firestore-writes 800
           fi
 
           if [ "$RUN_DUPLICATE_CHECK" != "false" ]; then

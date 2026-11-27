@@ -96,6 +96,8 @@ export interface MatchCandidate {
 
 export type MatchStatus = 'verified' | 'needs_verification' | 'unmatched';
 
+export type TrackType = 'bhajan' | 'instrumental' | 'karaoke' | 'special';
+
 export interface Bhajan {
   id: string;
   slug: string;
@@ -125,6 +127,7 @@ export interface Bhajan {
   sheetMusicUrl?: string | null;
   sourceUrl?: string | null;
   metadataSource: BhajanMetadataSource;
+  trackType?: TrackType;
   isEstimated?: boolean;
   lyricsMissing?: boolean;
   matchStatus?: MatchStatus;
@@ -173,6 +176,7 @@ export interface BhajanIndexEntry {
   recordingCount: number;
   hasDirectAudio?: boolean;
   metadataSource: BhajanMetadataSource;
+  trackType?: TrackType;
   slugAliases?: string[];
   updatedAt?: string;
 }

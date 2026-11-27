@@ -16,6 +16,7 @@ import {
   type RagaInfo,
   type RecordingSource,
   type SubmissionType,
+  type TrackType,
 } from '@bhajami/shared';
 import { logEvent } from './logger';
 
@@ -71,6 +72,7 @@ export interface CloudApprovedOverride {
   missingFields?: MissingFieldKey[];
   slugAliases?: string[];
   metadataSource?: Bhajan['metadataSource'];
+  trackType?: TrackType;
   bhajamiOverride?: boolean;
   bhajamiNewBhajan?: boolean;
   isNewBhajan?: boolean;
@@ -373,6 +375,8 @@ export function buildCanonicalBhajanFields(
   if (ov.matchStatus) out.matchStatus = ov.matchStatus;
   if (ov.matchCandidates) out.matchCandidates = ov.matchCandidates;
   if (ov.slugAliases) out.slugAliases = ov.slugAliases;
+  const resolvedTrackType = ov.trackType ?? existingBhajan?.trackType;
+  if (resolvedTrackType) out.trackType = resolvedTrackType;
 
   const candidateForMissing: Partial<Bhajan> = {
     ...existingBhajan,
@@ -448,6 +452,13 @@ function parseCorrectionFields(id: string, parsed: Record<string, unknown>): Lyr
     contributorRepliedAt:
       typeof parsed.contributorRepliedAt === 'string' ? parsed.contributorRepliedAt : null,
   };
+}
+
+export function parseTrackType(raw: unknown): TrackType | undefined {
+  if (raw === 'bhajan' || raw === 'instrumental' || raw === 'karaoke' || raw === 'special') {
+    return raw;
+  }
+  return undefined;
 }
 
 export function parseBhajanRecord(bhajanId: string, fields: Record<string, unknown>): Bhajan {
@@ -584,6 +595,7 @@ export function parseBhajanRecord(bhajanId: string, fields: Record<string, unkno
       typeof fields.metadataSource === 'string'
         ? (fields.metadataSource as Bhajan['metadataSource'])
         : 'community_contributed',
+    trackType: parseTrackType(fields.trackType),
     isEstimated: fields.isEstimated === true ? true : undefined,
     lyricsMissing: fields.lyricsMissing === true ? true : undefined,
     matchStatus:
@@ -698,6 +710,7 @@ function parseOverrideFromFields(
       typeof fields.metadataSource === 'string'
         ? (fields.metadataSource as Bhajan['metadataSource'])
         : undefined,
+    trackType: parseTrackType(fields.trackType),
     bhajamiOverride: typeof fields.bhajamiOverride === 'boolean' ? fields.bhajamiOverride : undefined,
     isNewBhajan: fields.bhajamiNewBhajan === true ? true : undefined,
     bhajamiNewBhajan: fields.bhajamiNewBhajan === true ? true : undefined,

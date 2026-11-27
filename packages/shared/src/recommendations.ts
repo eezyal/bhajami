@@ -1,7 +1,43 @@
-import type { Bhajan, BhajanIndexEntry, RecordingSource } from './types';
+import type { Bhajan, BhajanIndexEntry, RecordingSource, TrackType } from './types';
 
 export type StreamModeKind = 'discovery' | 'for_you' | 'liked_only';
 export type StreamMediaMode = 'audio' | 'video';
+
+const SPECIAL_TRACK_TITLE_RE =
+  /\b(?:karaoke|instrumental|nadasudha|nada\s+sudha|on\s+veena|violin\s+instrumental|flute\s+instrumental|sitar\s+instrumental|episode\s+\d+|sama\s*[-–]\s*\d+|ramayana\s+through\s+sai\s+bhajans|100\s+million\s+views|channel\s+launching|global\s+akhanda\s+bhajan|story\s+of\s+the\s+vibhuti\s+mantra|who\s+is\s+sri\s+sathya\s+sai)\b/i;
+
+const SPECIAL_RECORDING_RE =
+  /(?:^|[\s_\-/|])(?:karaoke|gents_karaoke|ladies_karaoke|instrumental|nadasudha|nada_sudha|on_veena|on\s+veena|violin\s+instrumental)(?:$|[\s_\-./|])/i;
+
+/**
+ * Returns true when a catalog item is an instrumental, karaoke, or special non-bhajan track
+ * that should be excluded from standard vocal random streams and missing-lyrics queues.
+ */
+export function isSpecialOrInstrumentalTrack(item: {
+  title?: string | null;
+  trackType?: TrackType | null;
+} | null | undefined): boolean {
+  if (!item) return false;
+  if (
+    item.trackType === 'instrumental' ||
+    item.trackType === 'karaoke' ||
+    item.trackType === 'special'
+  ) {
+    return true;
+  }
+  return Boolean(item.title && SPECIAL_TRACK_TITLE_RE.test(item.title));
+}
+
+/**
+ * Returns true when an individual recording inside a bhajan entry is karaoke or instrumental.
+ */
+export function isKaraokeOrInstrumentalRecording(
+  rec: Pick<RecordingSource, 'label' | 'externalUrl' | 'localPath'> | null | undefined,
+): boolean {
+  if (!rec) return false;
+  const text = `${rec.label || ''} ${rec.externalUrl || ''} ${rec.localPath || ''}`;
+  return SPECIAL_RECORDING_RE.test(text);
+}
 
 export interface BhajanRecommendation {
   entry: BhajanIndexEntry;
@@ -118,9 +154,10 @@ export function computeSimilarBhajans(
     }
   }
 
-  const hasPlayable = entries.some((e) => e.recordingCount > 0);
+  const hasPlayable = entries.some((e) => e.recordingCount > 0 && !isSpecialOrInstrumentalTrack(e));
   const candidates = entries.filter((e) => {
     if (likedSet.has(e.id)) return false;
+    if (isSpecialOrInstrumentalTrack(e)) return false;
     if (onlyPlayable && hasPlayable && e.recordingCount <= 0) return false;
     return true;
   });
@@ -258,14 +295,26 @@ export function buildStreamQueue(
     deityFilter?: string;
     ragaFilter?: string;
     mediaMode?: StreamMediaMode;
+    includeTrackTypes?: readonly TrackType[];
     seed?: number;
   },
 ): BhajanIndexEntry[] {
   const rng = makeRng(options.seed);
   const deityWanted = options.deityFilter?.trim().toLowerCase() || '';
   const ragaWanted = normalizeRagaKey(options.ragaFilter);
+  const allowedTrackTypes =
+    options.includeTrackTypes && options.includeTrackTypes.length > 0
+      ? new Set<TrackType>(options.includeTrackTypes)
+      : null;
 
   const matching = entries.filter((e) => {
+    if (allowedTrackTypes) {
+      const resolvedType: TrackType =
+        e.trackType ?? (isSpecialOrInstrumentalTrack(e) ? 'special' : 'bhajan');
+      if (!allowedTrackTypes.has(resolvedType)) return false;
+    } else if (options.mode !== 'liked_only' && isSpecialOrInstrumentalTrack(e)) {
+      return false;
+    }
     if (deityWanted && deityWanted !== 'all') {
       if (!(e.deity || '').toLowerCase().includes(deityWanted)) return false;
     }
@@ -387,13 +436,22 @@ export function pickStreamRecording(
     ? recs.find((r) => r.id === preferredRecordingId && isPlayableRecording(r))
     : undefined;
 
+  const vocalPreferred = !isSpecialOrInstrumentalTrack(bhajan ?? {});
+  const candidateRecs = vocalPreferred
+    ? (() => {
+        const nonSpecial = recs.filter((r) => !isKaraokeOrInstrumentalRecording(r));
+        return nonSpecial.length > 0 ? nonSpecial : recs;
+      })()
+    : recs;
+
   const sssmcAudio =
-    recs.find((r) => isDirectAudioRecording(r) && r.collection === 'sssmediacentre_bhajan_a_day') ??
-    null;
-  const directAudio = sssmcAudio ?? recs.find(isDirectAudioRecording) ?? null;
+    candidateRecs.find(
+      (r) => isDirectAudioRecording(r) && r.collection === 'sssmediacentre_bhajan_a_day',
+    ) ?? null;
+  const directAudio = sssmcAudio ?? candidateRecs.find(isDirectAudioRecording) ?? null;
   const embeddableYt =
-    recs.find((r) => isYouTubeRecording(r) && r.embeddable !== false) ?? null;
-  const anyYt = embeddableYt ?? recs.find(isYouTubeRecording) ?? null;
+    candidateRecs.find((r) => isYouTubeRecording(r) && r.embeddable !== false) ?? null;
+  const anyYt = embeddableYt ?? candidateRecs.find(isYouTubeRecording) ?? null;
 
   const preferred = userPicked
     ? userPicked
@@ -402,8 +460,8 @@ export function pickStreamRecording(
         anyYt ??
         playableDefault ??
         directAudio ??
-        recs[0]
-      : playableDefault ?? directAudio ?? anyYt ?? recs[0];
+        candidateRecs[0]
+      : playableDefault ?? directAudio ?? anyYt ?? candidateRecs[0];
 
   return {
     recording: preferred,

@@ -5,6 +5,8 @@ import {
   buildStreamQueue,
   computeSimilarBhajans,
   groupRecommendationsByRaga,
+  isKaraokeOrInstrumentalRecording,
+  isSpecialOrInstrumentalTrack,
   normalizeRagaKey,
   pickStreamRecording,
 } from '../src/recommendations';
@@ -323,5 +325,97 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
     assert.equal(pickStreamRecording(audioDefaultBhajan, 'audio').recording?.id, 'mp3_alt');
     assert.equal(pickStreamRecording(audioDefaultBhajan, 'video').recording?.id, 'yt_best');
     assert.equal(pickStreamRecording(audioDefaultBhajan, 'video', 'sssmc_001').recording?.id, 'sssmc_001');
+  });
+
+  it('excludes instrumental/karaoke/special tracks from Random Stream & prefers vocal recordings over karaoke', () => {
+    const entriesWithSpecials: BhajanIndexEntry[] = [
+      ...SAMPLE_ENTRIES,
+      {
+        id: 'inst-veena-1',
+        slug: 'inst-veena-1',
+        title: 'Durga Bhavani Ma Jaya Jaya Sai Ma (Instrumental)',
+        searchText: 'durga bhavani instrumental veena',
+        phoneticTokens: ['durga', 'bhavani'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        missingFields: [],
+        recordingCount: 1,
+        metadataSource: 'youtube_sss_bhajans',
+        trackType: 'instrumental',
+      },
+      {
+        id: 'karaoke-1',
+        slug: 'karaoke-1',
+        title: 'Sri Guru Paduka Stotram (Karaoke)',
+        searchText: 'guru paduka stotram karaoke',
+        phoneticTokens: ['guru', 'paduka'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        missingFields: [],
+        recordingCount: 1,
+        metadataSource: 'youtube_sss_bhajans',
+        trackType: 'karaoke',
+      },
+      {
+        id: 'special-sama-1',
+        slug: 'special-sama-1',
+        title: 'Why Fear When I Am Here (SAMA - 04)',
+        searchText: 'why fear when i am here sama',
+        phoneticTokens: ['why', 'fear'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        missingFields: [],
+        recordingCount: 1,
+        metadataSource: 'youtube_sss_bhajans',
+        trackType: 'special',
+      },
+    ];
+
+    assert.equal(isSpecialOrInstrumentalTrack({ title: 'Pranamami Sri Durge | Soothing Instrumental' }), true);
+    assert.equal(isKaraokeOrInstrumentalRecording({ label: 'Gents_Karaoke_C_Pancham.mp3' }), true);
+
+    const disc = buildStreamQueue(entriesWithSpecials, {
+      mode: 'discovery',
+      likedIds: [],
+      seed: 7,
+    });
+    assert.equal(disc.some((e) => e.id === 'inst-veena-1'), false);
+    assert.equal(disc.some((e) => e.id === 'karaoke-1'), false);
+    assert.equal(disc.some((e) => e.id === 'special-sama-1'), false);
+    assert.equal(disc.length, 4);
+
+    // Future opt-in instrumental stream explicitly includes only instrumental tracks
+    const instOnly = buildStreamQueue(entriesWithSpecials, {
+      mode: 'discovery',
+      likedIds: [],
+      includeTrackTypes: ['instrumental'],
+      seed: 7,
+    });
+    assert.deepEqual(
+      instOnly.map((e) => e.id),
+      ['inst-veena-1'],
+    );
+
+    // For a regular bhajan, pickStreamRecording avoids choosing Karaoke MP3 ahead of Reference vocal MP3
+    const withKaraokeFirst = {
+      id: 'rama-krishna',
+      title: 'Rama Krishna Hari Narayana',
+      trackType: 'bhajan',
+      recordings: [
+        {
+          id: 'sair_karaoke',
+          label: 'Sai Rhythms Reference Audio (Rama_Krishna_Gents_Karaoke_C_Pancham.mp3)',
+          collection: 'sairhythms_ref',
+          externalUrl: 'https://sairhythms.sathyasai.org/audio/Rama_Krishna_Gents_Karaoke_C_Pancham.mp3',
+        },
+        {
+          id: 'sair_vocal',
+          label: 'Sai Rhythms Reference Audio (rama-krishna-hari-narayana.mp3)',
+          collection: 'sairhythms_ref',
+          externalUrl: 'https://sairhythms.sathyasai.org/audio/rama-krishna-hari-narayana.mp3',
+        },
+      ],
+    } as unknown as Bhajan;
+    assert.equal(pickStreamRecording(withKaraokeFirst, 'audio').recording?.id, 'sair_vocal');
   });
 });

@@ -12,6 +12,7 @@ import {
   type PitchInfo,
   type RagaInfo,
   type RecordingSource,
+  type TrackType,
 } from '@bhajami/shared';
 import bundledCatalogJson from '../../../../packages/shared/data/catalog.json';
 import bundledIndexJson from '../../../../packages/shared/data/catalog-index.v1.json';
@@ -206,6 +207,13 @@ export function parseFirestoreBhajan(
         : legacyYtId
           ? 'youtube_sss_bhajans'
           : 'community_contributed',
+    trackType:
+      fields.trackType === 'bhajan' ||
+      fields.trackType === 'instrumental' ||
+      fields.trackType === 'karaoke' ||
+      fields.trackType === 'special'
+        ? (fields.trackType as TrackType)
+        : undefined,
     isEstimated: fields.isEstimated === true ? true : undefined,
     lyricsMissing: fields.lyricsMissing === true ? true : undefined,
     matchStatus:
