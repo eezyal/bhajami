@@ -234,15 +234,19 @@ service cloud.firestore {
     // Check if the user is authenticated with a non-anonymous provider
     function isNonAnonymousAuth() {
       return request.auth != null &&
+        'firebase' in request.auth.token &&
+        'sign_in_provider' in request.auth.token.firebase &&
         request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
     // Check if the user is an authorized studio admin
     function isAdmin() {
       return request.auth != null &&
-        (request.auth.token.admin == true ||
-         (request.auth.token.email is string &&
+        (('admin' in request.auth.token && request.auth.token.admin == true) ||
+         ('email' in request.auth.token &&
+          request.auth.token.email is string &&
           request.auth.token.email.lower() == 'pschax@gmail.com' &&
+          'email_verified' in request.auth.token &&
           request.auth.token.email_verified == true));
     }
 
@@ -907,10 +911,13 @@ service cloud.firestore {
     // Crowd-sourced lyric & metadata corrections workflow
     match /lyricCorrections/{correctionId} {
       allow read: if isAdmin() ||
-        (isAuthenticated() && resource.data.submitterUid == request.auth.uid);
+        (isAuthenticated() &&
+         'submitterUid' in resource.data &&
+         resource.data.submitterUid == request.auth.uid);
 
       allow create: if isValidLyricCorrection(request.resource.data) &&
         isNonAnonymousAuth() &&
+        'submitterUid' in request.resource.data &&
         request.resource.data.submitterUid == request.auth.uid &&
         request.resource.data.status == 'pending' &&
         (!('reviewedAt' in request.resource.data) || request.resource.data.reviewedAt == null) &&
@@ -937,6 +944,7 @@ service cloud.firestore {
           (isNonAnonymousAuth() &&
            'submitterUid' in resource.data &&
            resource.data.submitterUid == request.auth.uid &&
+           'status' in resource.data &&
            resource.data.status in ['info_requested', 'rejected'] &&
            request.resource.data.status in ['info_requested', 'rejected', 'pending'] &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -953,6 +961,7 @@ service cloud.firestore {
              'infoRequestedAt',
              'infoRequestNote'
            ]) &&
+           'contributorReply' in request.resource.data &&
            request.resource.data.contributorReply is string &&
            request.resource.data.contributorReply.size() >= 1 &&
            request.resource.data.contributorReply.size() <= 4000 &&
