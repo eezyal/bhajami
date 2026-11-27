@@ -312,78 +312,37 @@ service cloud.firestore {
       return bhajanId.size() >= 1 &&
         bhajanId.size() <= 120 &&
         data is map &&
-        data.keys().size() >= 1 &&
-        data.keys().size() <= 60 &&
-        (!('id' in data) || (data.id is string && data.id == bhajanId)) &&
-        isOptionalString(data, 'slug', 1, 120) &&
-        isOptionalString(data, 'title', 1, 200) &&
-        isOptionalNullableString(data, 'deity', 0, 120) &&
-        isOptionalNullableString(data, 'language', 0, 60) &&
-        (!('raga' in data) || data.raga == null ||
-          (data.raga is string && data.raga.size() <= 120) ||
-          (data.raga is map && data.raga.keys().size() <= 10)) &&
-        isOptionalNullableString(data, 'beat', 0, 60) &&
-        isOptionalNullableString(data, 'tala', 0, 120) &&
-        (!('tempo' in data) || data.tempo == null ||
-          (data.tempo is string && data.tempo.size() <= 60) ||
-          (data.tempo is number && data.tempo >= 0 && data.tempo <= 500)) &&
-        isOptionalNullableString(data, 'level', 0, 60) &&
-        isOptionalNullableString(data, 'gentsPitchRaw', 0, 80) &&
-        isOptionalNullableString(data, 'ladiesPitchRaw', 0, 80) &&
-        (!('gentsPitch' in data) || data.gentsPitch == null ||
-          (data.gentsPitch is map && data.gentsPitch.keys().size() <= 6)) &&
-        (!('ladiesPitch' in data) || data.ladiesPitch == null ||
-          (data.ladiesPitch is map && data.ladiesPitch.keys().size() <= 6)) &&
-        (!('firstLineNotes' in data) || data.firstLineNotes == null ||
-          (data.firstLineNotes is map && data.firstLineNotes.keys().size() <= 6)) &&
-        isOptionalNullableString(data, 'notesRange', 0, 120) &&
-        isOptionalNullableString(data, 'meaning', 0, 5000) &&
-        (!('sheetMusicUrl' in data) || data.sheetMusicUrl == null ||
-          data.sheetMusicUrl == '' || isValidUrl(data.sheetMusicUrl)) &&
-        (!('sourceUrl' in data) || data.sourceUrl == null ||
-          data.sourceUrl == '' || isValidUrl(data.sourceUrl)) &&
+        data.size() >= 1 &&
+        data.size() <= 60 &&
+        (!('id' in data) || data.id == bhajanId) &&
+        (!('slug' in data) || (data.slug is string && data.slug.size() <= 120)) &&
+        (!('title' in data) || (data.title is string && data.title.size() >= 1 && data.title.size() <= 200)) &&
+        (!('meaning' in data) || data.meaning == null || (data.meaning is string && data.meaning.size() <= 5000)) &&
+        (!('sheetMusicUrl' in data) || data.sheetMusicUrl == null || data.sheetMusicUrl == '' ||
+          (data.sheetMusicUrl is string && data.sheetMusicUrl.size() <= 500 && data.sheetMusicUrl.matches('^https?://.*'))) &&
+        (!('sourceUrl' in data) || data.sourceUrl == null || data.sourceUrl == '' ||
+          (data.sourceUrl is string && data.sourceUrl.size() <= 500 && data.sourceUrl.matches('^https?://.*'))) &&
         (!('metadataSource' in data) || data.metadataSource == null ||
-          (data.metadataSource is string &&
-           data.metadataSource in [
-             'sairhythms_verified',
-             'sssmediacentre_verified',
-             'local_inferred',
-             'community_contributed',
-             'youtube_prasanthi_mandir_live',
-             'youtube_sss_bhajans',
-             'admin_curated'
-           ])) &&
-        (!('isEstimated' in data) || data.isEstimated is bool) &&
-        (!('lyricsMissing' in data) || data.lyricsMissing is bool) &&
+          data.metadataSource in [
+            'sairhythms_verified',
+            'sssmediacentre_verified',
+            'local_inferred',
+            'community_contributed',
+            'youtube_prasanthi_mandir_live',
+            'youtube_sss_bhajans',
+            'admin_curated'
+          ]) &&
         (!('matchStatus' in data) || data.matchStatus == null ||
-          (data.matchStatus is string &&
-           data.matchStatus in ['verified', 'needs_verification', 'unmatched'])) &&
-        (!('matchCandidates' in data) || data.matchCandidates == null ||
-          (data.matchCandidates is list && data.matchCandidates.size() <= 10 &&
-           (data.matchCandidates.size() == 0 || data.matchCandidates[0] is map))) &&
-        (!('missingFields' in data) || data.missingFields == null ||
-          (data.missingFields is list && data.missingFields.size() <= 15 &&
-           (data.missingFields.size() == 0 || data.missingFields[0] is string))) &&
-        (!('slugAliases' in data) || data.slugAliases == null ||
-          (data.slugAliases is list && data.slugAliases.size() <= 50 &&
-           (data.slugAliases.size() == 0 || data.slugAliases[0] is string))) &&
-        (!('lyricsSets' in data) ||
-          (data.lyricsSets is list && data.lyricsSets.size() <= 35 &&
-           (data.lyricsSets.size() == 0 || data.lyricsSets[0] is map))) &&
-        (!('glossary' in data) ||
-          (data.glossary is list && data.glossary.size() <= 100 &&
-           (data.glossary.size() == 0 || data.glossary[0] is map))) &&
-        (!('recordings' in data) ||
-          (data.recordings is list && data.recordings.size() <= 150 &&
-           (data.recordings.size() == 0 || data.recordings[0] is map))) &&
-        (!('addedRecordings' in data) || data.addedRecordings == null ||
-          (data.addedRecordings is list && data.addedRecordings.size() <= 150 &&
-           (data.addedRecordings.size() == 0 || data.addedRecordings[0] is map))) &&
-        isOptionalNullableString(data, 'defaultRecordingId', 0, 120) &&
-        (!('bhajamiOverride' in data) || data.bhajamiOverride == null ||
-          data.bhajamiOverride is bool) &&
-        (!('bhajamiNewBhajan' in data) || data.bhajamiNewBhajan == null ||
-          data.bhajamiNewBhajan is bool) &&
+          data.matchStatus in ['verified', 'needs_verification', 'unmatched']) &&
+        (!('defaultRecordingId' in data) || data.defaultRecordingId == null ||
+          (data.defaultRecordingId is string && data.defaultRecordingId.size() <= 120)) &&
+        (!('lyricsSets' in data) || (data.lyricsSets is list && data.lyricsSets.size() <= 35)) &&
+        (!('glossary' in data) || (data.glossary is list && data.glossary.size() <= 100)) &&
+        (!('recordings' in data) || (data.recordings is list && data.recordings.size() <= 150)) &&
+        (!('addedRecordings' in data) || data.addedRecordings == null || (data.addedRecordings is list && data.addedRecordings.size() <= 150)) &&
+        (!('matchCandidates' in data) || data.matchCandidates == null || (data.matchCandidates is list && data.matchCandidates.size() <= 10)) &&
+        (!('missingFields' in data) || data.missingFields == null || (data.missingFields is list && data.missingFields.size() <= 15)) &&
+        (!('slugAliases' in data) || data.slugAliases == null || (data.slugAliases is list && data.slugAliases.size() <= 50)) &&
         (!('crawledAt' in data) || data.crawledAt == null || isValidTimestampOrIso(data.crawledAt)) &&
         (!('createdAt' in data) || isValidTimestampOrIso(data.createdAt)) &&
         (!('updatedAt' in data) || isValidTimestampOrIso(data.updatedAt));
@@ -413,36 +372,36 @@ service cloud.firestore {
 
     function isValidProposedMetadata(meta) {
       return meta is map &&
-        meta.keys().size() <= 20 &&
+        meta.size() <= 20 &&
         meta.keys().hasOnly([
           'title', 'deity', 'raga', 'ragaName', 'arohanam', 'avarohanam',
           'tala', 'beat', 'tempo', 'gentsPitchRaw', 'ladiesPitchRaw', 'pitch',
           'firstLineSargam', 'firstLineWestern', 'notesRange', 'sheetMusicUrl',
           'language', 'category', 'meaning', 'notes'
         ]) &&
-        isOptionalNullableString(meta, 'title', 1, 200) &&
-        isOptionalNullableString(meta, 'deity', 0, 120) &&
-        isOptionalNullableString(meta, 'raga', 0, 120) &&
-        isOptionalNullableString(meta, 'ragaName', 0, 120) &&
-        isOptionalNullableString(meta, 'arohanam', 0, 200) &&
-        isOptionalNullableString(meta, 'avarohanam', 0, 200) &&
-        isOptionalNullableString(meta, 'tala', 0, 120) &&
-        isOptionalNullableString(meta, 'beat', 0, 60) &&
+        (!('title' in meta) || meta.title == null || (meta.title is string && meta.title.size() >= 1 && meta.title.size() <= 200)) &&
+        (!('deity' in meta) || meta.deity == null || (meta.deity is string && meta.deity.size() <= 120)) &&
+        (!('raga' in meta) || meta.raga == null || (meta.raga is string && meta.raga.size() <= 120)) &&
+        (!('ragaName' in meta) || meta.ragaName == null || (meta.ragaName is string && meta.ragaName.size() <= 120)) &&
+        (!('arohanam' in meta) || meta.arohanam == null || (meta.arohanam is string && meta.arohanam.size() <= 200)) &&
+        (!('avarohanam' in meta) || meta.avarohanam == null || (meta.avarohanam is string && meta.avarohanam.size() <= 200)) &&
+        (!('tala' in meta) || meta.tala == null || (meta.tala is string && meta.tala.size() <= 120)) &&
+        (!('beat' in meta) || meta.beat == null || (meta.beat is string && meta.beat.size() <= 60)) &&
         (!('tempo' in meta) || meta.tempo == null ||
           (meta.tempo is string && meta.tempo.size() <= 60) ||
           (meta.tempo is number && meta.tempo >= 0 && meta.tempo <= 500)) &&
-        isOptionalNullableString(meta, 'gentsPitchRaw', 0, 60) &&
-        isOptionalNullableString(meta, 'ladiesPitchRaw', 0, 60) &&
-        isOptionalNullableString(meta, 'pitch', 0, 60) &&
-        isOptionalNullableString(meta, 'firstLineSargam', 0, 500) &&
-        isOptionalNullableString(meta, 'firstLineWestern', 0, 500) &&
-        isOptionalNullableString(meta, 'notesRange', 0, 120) &&
-        (!('sheetMusicUrl' in meta) || meta.sheetMusicUrl == null ||
-          meta.sheetMusicUrl == '' || isValidUrl(meta.sheetMusicUrl)) &&
-        isOptionalNullableString(meta, 'language', 0, 60) &&
-        isOptionalNullableString(meta, 'category', 0, 120) &&
-        isOptionalNullableString(meta, 'meaning', 0, 2000) &&
-        isOptionalNullableString(meta, 'notes', 0, 2000);
+        (!('gentsPitchRaw' in meta) || meta.gentsPitchRaw == null || (meta.gentsPitchRaw is string && meta.gentsPitchRaw.size() <= 60)) &&
+        (!('ladiesPitchRaw' in meta) || meta.ladiesPitchRaw == null || (meta.ladiesPitchRaw is string && meta.ladiesPitchRaw.size() <= 60)) &&
+        (!('pitch' in meta) || meta.pitch == null || (meta.pitch is string && meta.pitch.size() <= 60)) &&
+        (!('firstLineSargam' in meta) || meta.firstLineSargam == null || (meta.firstLineSargam is string && meta.firstLineSargam.size() <= 500)) &&
+        (!('firstLineWestern' in meta) || meta.firstLineWestern == null || (meta.firstLineWestern is string && meta.firstLineWestern.size() <= 500)) &&
+        (!('notesRange' in meta) || meta.notesRange == null || (meta.notesRange is string && meta.notesRange.size() <= 120)) &&
+        (!('sheetMusicUrl' in meta) || meta.sheetMusicUrl == null || meta.sheetMusicUrl == '' ||
+          (meta.sheetMusicUrl is string && meta.sheetMusicUrl.size() <= 500 && meta.sheetMusicUrl.matches('^https?://.*'))) &&
+        (!('language' in meta) || meta.language == null || (meta.language is string && meta.language.size() <= 60)) &&
+        (!('category' in meta) || meta.category == null || (meta.category is string && meta.category.size() <= 120)) &&
+        (!('meaning' in meta) || meta.meaning == null || (meta.meaning is string && meta.meaning.size() <= 2000)) &&
+        (!('notes' in meta) || meta.notes == null || (meta.notes is string && meta.notes.size() <= 2000));
     }
 
     function isValidAudioSubmission(audio) {
@@ -452,17 +411,15 @@ service cloud.firestore {
         audio.url is string &&
         audio.url.size() >= 1 &&
         audio.url.size() <= 1000 &&
-        (audio.url.matches("^https://.*") ||
-         audio.url.matches("^http://.*") ||
-         audio.url.matches("^/api/uploaded-audio\\?file=.*")) &&
+        audio.url.matches('^https?://.*|^/api/uploaded-audio\\?file=.*') &&
         'label' in audio &&
         audio.label is string &&
         audio.label.size() <= 200 &&
-        isOptionalNullableString(audio, 'mimeType', 0, 80) &&
+        (!('mimeType' in audio) || audio.mimeType == null || (audio.mimeType is string && audio.mimeType.size() <= 80)) &&
         (!('durationSec' in audio) || audio.durationSec == null ||
           (audio.durationSec is number && audio.durationSec >= 0 && audio.durationSec <= 7200)) &&
         (!('sourceKind' in audio) || audio.sourceKind == null ||
-          (audio.sourceKind is string && audio.sourceKind in ['uploaded_file', 'external_url']));
+          audio.sourceKind in ['uploaded_file', 'external_url']);
     }
 
     function isValidLyricCorrection(data) {
@@ -509,27 +466,24 @@ service cloud.firestore {
         data.bhajanTitle is string && data.bhajanTitle.size() >= 1 && data.bhajanTitle.size() <= 200 &&
         data.script is string && data.script.size() >= 1 && data.script.size() <= 40 &&
         (!('submissionType' in data) || data.submissionType == null ||
-          (data.submissionType is string &&
-           data.submissionType in ['lyric_correction', 'alternate_lyrics', 'new_bhajan', 'metadata_addition'])) &&
-        isOptionalNullableString(data, 'alternateScriptKind', 0, 40) &&
+          data.submissionType in ['lyric_correction', 'alternate_lyrics', 'new_bhajan', 'metadata_addition']) &&
+        (!('alternateScriptKind' in data) || data.alternateScriptKind == null || (data.alternateScriptKind is string && data.alternateScriptKind.size() <= 40)) &&
         data.originalLyrics is list && data.originalLyrics.size() <= 200 &&
-        (data.originalLyrics.size() == 0 || data.originalLyrics[0] is string) &&
-        data.proposedLyrics is list && data.proposedLyrics.size() >= 0 && data.proposedLyrics.size() <= 200 &&
-        (data.proposedLyrics.size() == 0 || data.proposedLyrics[0] is string) &&
+        data.proposedLyrics is list && data.proposedLyrics.size() <= 200 &&
         (!('proposedMetadata' in data) || data.proposedMetadata == null || isValidProposedMetadata(data.proposedMetadata)) &&
         (!('audioSubmission' in data) || data.audioSubmission == null || isValidAudioSubmission(data.audioSubmission)) &&
         data.reasonOrSource is string && data.reasonOrSource.size() <= 1000 &&
-        isOptionalNullableString(data, 'submitterUid', 1, 128) &&
+        (!('submitterUid' in data) || data.submitterUid == null || (data.submitterUid is string && data.submitterUid.size() >= 1 && data.submitterUid.size() <= 128)) &&
         data.submitterName is string && data.submitterName.size() >= 1 && data.submitterName.size() <= 120 &&
         data.submitterEmail is string && data.submitterEmail.size() >= 3 && data.submitterEmail.size() <= 254 &&
-        data.status is string && data.status in ['pending', 'info_requested', 'approved', 'rejected'] &&
+        data.status in ['pending', 'info_requested', 'approved', 'rejected'] &&
         isValidTimestampOrIso(data.createdAt) &&
         (!('reviewedAt' in data) || data.reviewedAt == null || isValidTimestampOrIso(data.reviewedAt)) &&
-        isOptionalNullableString(data, 'reviewedBy', 1, 254) &&
-        isOptionalNullableString(data, 'reviewNote', 0, 1000) &&
+        (!('reviewedBy' in data) || data.reviewedBy == null || (data.reviewedBy is string && data.reviewedBy.size() >= 1 && data.reviewedBy.size() <= 254)) &&
+        (!('reviewNote' in data) || data.reviewNote == null || (data.reviewNote is string && data.reviewNote.size() <= 1000)) &&
         (!('infoRequestedAt' in data) || data.infoRequestedAt == null || isValidTimestampOrIso(data.infoRequestedAt)) &&
-        isOptionalNullableString(data, 'infoRequestNote', 0, 2000) &&
-        isOptionalNullableString(data, 'contributorReply', 0, 4000) &&
+        (!('infoRequestNote' in data) || data.infoRequestNote == null || (data.infoRequestNote is string && data.infoRequestNote.size() <= 2000)) &&
+        (!('contributorReply' in data) || data.contributorReply == null || (data.contributorReply is string && data.contributorReply.size() <= 4000)) &&
         (!('contributorRepliedAt' in data) || data.contributorRepliedAt == null || isValidTimestampOrIso(data.contributorRepliedAt));
     }
 
@@ -572,12 +526,11 @@ service cloud.firestore {
         data is map &&
         data.keys().hasAll(requiredKeys) &&
         data.keys().hasOnly(allowedKeys) &&
-        data.videoId is string &&
         data.videoId == videoId &&
         data.channelId is string &&
         data.channelId.size() >= 1 &&
         data.channelId.size() <= 120 &&
-        isOptionalNullableString(data, 'playlistId', 0, 120) &&
+        (!('playlistId' in data) || data.playlistId == null || (data.playlistId is string && data.playlistId.size() <= 120)) &&
         data.rawTitle is string &&
         data.rawTitle.size() <= 500 &&
         data.rawDescription is string &&
@@ -587,17 +540,13 @@ service cloud.firestore {
         data.durationSec is number &&
         data.durationSec >= 0 &&
         isValidTimestampOrIso(data.publishedAt) &&
-        data.classification is string &&
         data.classification in ['single', 'volume', 'ambiguous_long'] &&
         data.embeddable is bool &&
-        (!('chapters' in data) || data.chapters == null ||
-          (data.chapters is list && data.chapters.size() <= 200 &&
-           (data.chapters.size() == 0 || data.chapters[0] is map))) &&
+        (!('chapters' in data) || data.chapters == null || (data.chapters is list && data.chapters.size() <= 200)) &&
         data.linkedBhajanIds is list &&
         data.linkedBhajanIds.size() <= 100 &&
-        (data.linkedBhajanIds.size() == 0 || data.linkedBhajanIds[0] is string) &&
         (!('excluded' in data) || data.excluded == null || data.excluded is bool) &&
-        isOptionalNullableString(data, 'exclusionReason', 0, 500) &&
+        (!('exclusionReason' in data) || data.exclusionReason == null || (data.exclusionReason is string && data.exclusionReason.size() <= 500)) &&
         isValidTimestampOrIso(data.lastVerifiedAt) &&
         isValidTimestampOrIso(data.ingestedAt);
     }
@@ -709,7 +658,9 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidBhajan(request.resource.data, bhajanId);
       allow update: if isAdmin() &&
         isValidBhajan(request.resource.data, bhajanId) &&
-        (!('createdAt' in resource.data) || areImmutableFieldsUnchanged(['createdAt']));
+        (!('createdAt' in resource.data) ||
+         ('createdAt' in request.resource.data &&
+          request.resource.data.createdAt == resource.data.createdAt));
       allow delete: if isAdmin();
 
       // Immutable audit log of bhajan catalog revisions
@@ -915,11 +866,12 @@ service cloud.firestore {
          'submitterUid' in resource.data &&
          resource.data.submitterUid == request.auth.uid);
 
-      allow create: if isValidLyricCorrection(request.resource.data) &&
-        isNonAnonymousAuth() &&
+      allow create: if isNonAnonymousAuth() &&
+        'status' in request.resource.data &&
+        request.resource.data.status == 'pending' &&
         'submitterUid' in request.resource.data &&
         request.resource.data.submitterUid == request.auth.uid &&
-        request.resource.data.status == 'pending' &&
+        isValidLyricCorrection(request.resource.data) &&
         (!('reviewedAt' in request.resource.data) || request.resource.data.reviewedAt == null) &&
         (!('reviewedBy' in request.resource.data) || request.resource.data.reviewedBy == null) &&
         (!('reviewNote' in request.resource.data) || request.resource.data.reviewNote == null) &&
