@@ -121,6 +121,13 @@ export function AdminModerationClient({
   const [selectedCurationId, setSelectedCurationId] = useState('');
   const [curationLoading, setCurationLoading] = useState(false);
   const [curationError, setCurationError] = useState<string | null>(null);
+  const [curationNotice, setCurationNotice] = useState<{
+    kind: 'error' | 'success';
+    text: string;
+  } | null>(null);
+  const [busyAction, setBusyAction] = useState<
+    'approve_merge' | 'keep_distinct' | 'publish_curated' | 'exclude_non_bhajan' | null
+  >(null);
   const [curatedLyricsText, setCuratedLyricsText] = useState('');
   const [curatedScript, setCuratedScript] = useState('Sanskrit / Hindi (Roman)');
   const [curatedMeta, setCuratedMeta] = useState<ProposedMetadataPatch>({});
@@ -283,6 +290,8 @@ export function AdminModerationClient({
     setSelectedCandidateIdx(0);
     setCurationFormDirty(false);
     setDismissReason('');
+    setCurationNotice(null);
+    setCurationError(null);
   }, [selectedCurationItem?.id]);
 
   useEffect(() => {
@@ -536,27 +545,99 @@ export function AdminModerationClient({
     }
   };
 
+  const showCurationValidationError = (text: string, focusId?: string) => {
+    setCurationError(text);
+    setCurationNotice({ kind: 'error', text });
+    if (focusId && typeof document !== 'undefined') {
+      const el = document.getElementById(focusId);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.focus();
+    }
+  };
+
+  const clearCurationNoticeIfError = () => {
+    setCurationNotice((prev) => (prev?.kind === 'error' ? null : prev));
+    setCurationError(null);
+  };
+
+  const renderInlineCurationNotice = () => {
+    const notice =
+      curationNotice || (curationError ? { kind: 'error' as const, text: curationError } : null);
+    if (!notice) return null;
+    return (
+      <div
+        role={notice.kind === 'error' ? 'alert' : 'status'}
+        className={`curation-inline-alert ${
+          notice.kind === 'error'
+            ? 'curation-inline-alert-error'
+            : 'curation-inline-alert-success'
+        }`}
+      >
+        {notice.text}
+      </div>
+    );
+  };
+
   const handleCurationAction = async (
     body: Record<string, unknown>,
     successMsg: string,
   ): Promise<boolean> => {
+    const actionKind = body.action;
+    const activeAction =
+      actionKind === 'approve_merge' ||
+      actionKind === 'keep_distinct' ||
+      actionKind === 'publish_curated' ||
+      actionKind === 'exclude_non_bhajan'
+        ? actionKind
+        : null;
     setActionBusy(true);
+    setBusyAction(activeAction);
     setCurationError(null);
+    setCurationNotice(null);
     setBanner(null);
     try {
-      const token = await getCurrentFirebaseIdToken();
-      const res = await fetch('/api/admin/curation', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
+      let token = await getCurrentFirebaseIdToken();
+      if (cloudMode && !token) {
+        token = await getCurrentFirebaseIdToken(true);
+      }
+      if (cloudMode && !token) {
+        const msg = 'Your admin sign-in session is missing or expired. Please sign in again and retry.';
+        setCurationError(msg);
+        setCurationNotice({ kind: 'error', text: msg });
+        return false;
+      }
+
+      const postAction = (authToken: string | null) =>
+        fetch('/api/admin/curation', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify(body),
+        });
+
+      let res = await postAction(token);
+      if (res.status === 401 && cloudMode) {
+        const refreshed = await getCurrentFirebaseIdToken(true);
+        if (refreshed) {
+          token = refreshed;
+          res = await postAction(token);
+        }
+      }
+
+      const rawText = await res.text();
+      let json: { error?: string } = {};
+      try {
+        json = rawText ? (JSON.parse(rawText) as { error?: string }) : {};
+      } catch {
+        json = {};
+      }
+
       if (!res.ok) {
-        setCurationError(json.error || 'Curation action failed.');
-        setActionBusy(false);
+        const errMsg = json.error || `Curation action failed (HTTP ${res.status}).`;
+        setCurationError(errMsg);
+        setCurationNotice({ kind: 'error', text: errMsg });
         return false;
       }
       if (body.action === 'approve_merge' && typeof body.targetBhajanId === 'string') {
@@ -570,13 +651,18 @@ export function AdminModerationClient({
         });
       }
       await loadCurationData(curationView, token);
+      setCurationNotice({ kind: 'success', text: successMsg });
       setBanner(successMsg);
       return true;
     } catch (err) {
-      setCurationError(err instanceof Error ? err.message : 'Network error during curation action.');
+      const errMsg =
+        err instanceof Error ? err.message : 'Network error during curation action.';
+      setCurationError(errMsg);
+      setCurationNotice({ kind: 'error', text: errMsg });
       return false;
     } finally {
       setActionBusy(false);
+      setBusyAction(null);
     }
   };
 
@@ -1376,11 +1462,10 @@ export function AdminModerationClient({
                         const chosenDefaultId = selectedDefaultRecByPair[pairKey] || '';
                         const distinctReason = distinctReasonByPair[pairKey] || '';
                         const reasonInputId = `distinct-reason-${pairKey}`;
-                        const canApproveMerge =
-                          !actionBusy &&
-                          targetLoaded &&
-                          (combinedRecordings.length === 0 || Boolean(chosenDefaultId));
-                        const canKeepDistinct = !actionBusy && Boolean(distinctReason.trim());
+                        const firstRadioId = combinedRecordings[0]
+                          ? `merge-def-${pairKey}-${combinedRecordings[0].rec.id}`
+                          : undefined;
+                        const canApproveMerge = !actionBusy && targetLoaded;
                         const targetLines = targetDoc?.lyricsSets?.[0]?.lines ?? [];
                         const sourceLines = selectedCurationItem.lyricsSets?.[0]?.lines ?? [];
 
@@ -1431,8 +1516,15 @@ export function AdminModerationClient({
                                         ? 'Select a Default Version below before approving merge'
                                         : undefined
                                     }
-                                    onClick={() =>
-                                      handleCurationAction(
+                                    onClick={() => {
+                                      if (combinedRecordings.length > 0 && !chosenDefaultId) {
+                                        showCurationValidationError(
+                                          'Select a Default Version for Stream below before approving merge.',
+                                          firstRadioId,
+                                        );
+                                        return;
+                                      }
+                                      void handleCurationAction(
                                         {
                                           action: 'approve_merge',
                                           sourceBhajanId: selectedCurationItem.id,
@@ -1446,15 +1538,17 @@ export function AdminModerationClient({
                                           metadata: curatedMeta,
                                         },
                                         `Merged "${selectedCurationItem.title}" into "${cand.targetTitle}" and saved alias.`,
-                                      )
-                                    }
+                                      );
+                                    }}
                                   >
-                                    Approve Merge &amp; Save Alias
+                                    {busyAction === 'approve_merge'
+                                      ? 'Merging & Saving…'
+                                      : 'Approve Merge & Save Alias'}
                                   </button>
                                   <button
                                     type="button"
                                     className="btn btn-sm"
-                                    disabled={!canKeepDistinct}
+                                    disabled={actionBusy}
                                     title={
                                       !distinctReason.trim()
                                         ? 'Explain what makes these two bhajans different below before marking Keep Distinct'
@@ -1462,6 +1556,13 @@ export function AdminModerationClient({
                                     }
                                     onClick={() => {
                                       const noteText = distinctReason.trim();
+                                      if (!noteText) {
+                                        showCurationValidationError(
+                                          'Explain what makes these two bhajans different in the box below before clicking Keep Distinct.',
+                                          reasonInputId,
+                                        );
+                                        return;
+                                      }
                                       void handleCurationAction(
                                         {
                                           action: 'keep_distinct',
@@ -1480,10 +1581,12 @@ export function AdminModerationClient({
                                       });
                                     }}
                                   >
-                                    Keep Distinct
+                                    {busyAction === 'keep_distinct' ? 'Saving…' : 'Keep Distinct'}
                                   </button>
                                 </div>
                               </div>
+
+                              {renderInlineCurationNotice()}
 
                               <div className="merge-compare-grid">
                                 <div className="merge-compare-col">
@@ -1593,12 +1696,13 @@ export function AdminModerationClient({
                                                 name={`default-rec-${pairKey}`}
                                                 value={rec.id}
                                                 checked={chosenDefaultId === rec.id}
-                                                onChange={() =>
+                                                onChange={() => {
+                                                  clearCurationNoticeIfError();
                                                   setSelectedDefaultRecByPair((prev) => ({
                                                     ...prev,
                                                     [pairKey]: rec.id,
-                                                  }))
-                                                }
+                                                  }));
+                                                }}
                                               />
                                               <span className="merge-default-label-text">
                                                 <strong>{rec.label || rec.id}</strong>{' '}
@@ -1651,12 +1755,13 @@ export function AdminModerationClient({
                                       key={preset}
                                       type="button"
                                       className="distinct-reason-chip"
-                                      onClick={() =>
+                                      onClick={() => {
+                                        clearCurationNoticeIfError();
                                         setDistinctReasonByPair((prev) => ({
                                           ...prev,
                                           [pairKey]: preset,
-                                        }))
-                                      }
+                                        }));
+                                      }}
                                     >
                                       {preset}
                                     </button>
@@ -1669,12 +1774,13 @@ export function AdminModerationClient({
                                   className="textarea-control"
                                   placeholder="e.g., Same first line 'Subrahmanyam' but completely different middle stanzas and Mohanam tune..."
                                   value={distinctReason}
-                                  onChange={(e) =>
+                                  onChange={(e) => {
+                                    clearCurationNoticeIfError();
                                     setDistinctReasonByPair((prev) => ({
                                       ...prev,
                                       [pairKey]: e.target.value,
-                                    }))
-                                  }
+                                    }));
+                                  }}
                                 />
                                 <div className="field-hint" style={{ margin: 0, textAlign: 'right' }}>
                                   {distinctReason.trim().length}/500
@@ -1783,7 +1889,9 @@ export function AdminModerationClient({
                         />
                       </div>
 
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center' }}>
+                      {renderInlineCurationNotice()}
+
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.6rem', alignItems: 'center', marginTop: '0.5rem' }}>
                         <button
                           type="button"
                           className="btn btn-success"
@@ -1801,7 +1909,9 @@ export function AdminModerationClient({
                             )
                           }
                         >
-                          Publish Curated Lyrics &amp; Metadata
+                          {busyAction === 'publish_curated'
+                            ? 'Publishing…'
+                            : 'Publish Curated Lyrics & Metadata'}
                         </button>
                         <input
                           type="text"
@@ -1828,7 +1938,9 @@ export function AdminModerationClient({
                             )
                           }
                         >
-                          Dismiss Non-Bhajan
+                          {busyAction === 'exclude_non_bhajan'
+                            ? 'Dismissing…'
+                            : 'Dismiss Non-Bhajan'}
                         </button>
                       </div>
                     </div>

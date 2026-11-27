@@ -511,6 +511,33 @@ a:focus-visible {
   border-color: #92400e;
 }
 
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  opacity: 0.48;
+  cursor: not-allowed;
+  filter: saturate(0.45);
+}
+
+.btn:disabled:hover {
+  border-color: var(--border);
+}
+
+.btn-primary:disabled:hover {
+  border-color: var(--accent);
+}
+
+.btn-success:disabled:hover {
+  border-color: var(--success);
+}
+
+.btn-danger:disabled:hover {
+  border-color: var(--danger);
+}
+
+.btn-warn:disabled:hover {
+  border-color: #92400e;
+}
+
 .audio-preview-card {
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2011,4 +2038,24 @@ a:focus-visible {
   background: var(--surface);
   font-size: 0.84rem;
   line-height: 1.4;
+}
+
+.curation-inline-alert {
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+
+.curation-inline-alert-error {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.curation-inline-alert-success {
+  border-color: var(--success);
+  background: var(--success-bg);
+  color: var(--success);
 }

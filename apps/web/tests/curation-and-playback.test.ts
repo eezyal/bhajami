@@ -79,6 +79,14 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
             metadataSource: 'youtube_sss_bhajans',
             lyricsMissing: true,
             matchStatus: 'unmatched',
+            matchCandidates: [
+              {
+                targetBhajanId: 'aao-aao-nandalala',
+                targetTitle: 'Aao Aao Nandalala',
+                score: 0.81,
+                reason: 'stale_doubt',
+              },
+            ],
             missingFields: ['lyrics', 'meaning', 'gentsPitch', 'ladiesPitch', 'raga', 'beat', 'tempo', 'notation', 'alternateScripts'],
           },
           {
@@ -265,6 +273,8 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
     assert.ok(detail);
     assert.equal(detail.raga?.arohanam, 'S R2 G3 P D2 S');
     assert.equal(detail.gentsPitch?.semitoneFromC, 2);
+    assert.equal(detail.matchStatus, 'verified');
+    assert.deepEqual(detail.matchCandidates ?? [], []);
   });
 
   it('supports keep_distinct, approve_merge, and exclude_non_bhajan reason validation', async () => {
@@ -521,12 +531,16 @@ describe('Phase 5 curation API, metadata edits, and YouTube TOS playback verific
     assert.match(mobileAppSrc, /Show Lyrics/);
     assert.match(mobileAppSrc, /Hide Lyrics/);
 
-    // Guard against useEffect self-cancellation when fetching target bhajans for merge candidates
+    // Guard against useEffect self-cancellation and invisible disabled/error feedback in AdminModerationClient
     const adminModSrc = fs.readFileSync(
       path.resolve(process.cwd(), 'apps/web/src/components/AdminModerationClient.tsx'),
       'utf-8',
     );
     assert.match(adminModSrc, /fetchedTargetIdsRef/);
     assert.doesNotMatch(adminModSrc, /\},\s*\[candidateTargets,\s*selectedCurationItem\]\)/);
+    assert.match(adminModSrc, /renderInlineCurationNotice/);
+    assert.match(adminModSrc, /getCurrentFirebaseIdToken\(true\)/);
+    assert.match(css, /\.btn:disabled/);
+    assert.match(css, /\.curation-inline-alert/);
   });
 });

@@ -114,7 +114,9 @@ async function restGetDoc(
   });
   if (res.status === 404) return null;
   if (!res.ok) {
-    throw new Error(`Firestore read failed for ${collectionPath}/${docId}: ${await readRestError(res)}`);
+    throw new Error(
+      `Firestore read failed for ${collectionPath}/${docId} (HTTP ${res.status}): ${await readRestError(res)}`,
+    );
   }
   const doc = (await res.json()) as { fields?: Record<string, FirestoreValue> };
   return doc.fields ? fromFirestoreFields(doc.fields) : {};
@@ -143,7 +145,9 @@ async function restPatchDoc(
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) {
-    throw new Error(`Firestore write failed for ${collectionPath}/${docId}: ${await readRestError(res)}`);
+    throw new Error(
+      `Firestore write failed for ${collectionPath}/${docId} (HTTP ${res.status}): ${await readRestError(res)}`,
+    );
   }
 }
 
@@ -165,7 +169,9 @@ async function restCreateDoc(
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) {
-    throw new Error(`Firestore create failed for ${collectionPath}/${docId}: ${await readRestError(res)}`);
+    throw new Error(
+      `Firestore create failed for ${collectionPath}/${docId} (HTTP ${res.status}): ${await readRestError(res)}`,
+    );
   }
 }
 
@@ -182,7 +188,9 @@ async function restDeleteDoc(
   });
   if (res.status === 404) return;
   if (!res.ok) {
-    throw new Error(`Firestore delete failed for ${collectionPath}/${docId}: ${await readRestError(res)}`);
+    throw new Error(
+      `Firestore delete failed for ${collectionPath}/${docId} (HTTP ${res.status}): ${await readRestError(res)}`,
+    );
   }
 }
 
@@ -802,6 +810,7 @@ function preparePublishCuratedData(params: {
     lyricsMissing: nextLyricsSets.length === 0,
     isEstimated: false,
     matchStatus: 'verified',
+    matchCandidates: [],
     metadataSource: 'admin_curated',
     bhajamiOverride: true,
     updatedAt: now,
@@ -1377,25 +1386,34 @@ export async function executeCurationAction(
       }
 
       if (payload.videoId) {
-        const yFields = await restGetDoc('youtubeVideos', payload.videoId, idToken);
-        if (yFields) {
-          const linked = Array.isArray(yFields.linkedBhajanIds)
-            ? (yFields.linkedBhajanIds as string[])
-            : [];
-          const updatedLinked = Array.from(
-            new Set(
-              linked
-                .filter((id) => id !== payload.sourceBhajanId)
-                .concat(payload.targetBhajanId),
-            ),
-          );
-          await restPatchDoc(
-            'youtubeVideos',
-            payload.videoId,
-            { linkedBhajanIds: updatedLinked, lastVerifiedAt: now },
-            idToken,
-            ['linkedBhajanIds', 'lastVerifiedAt'],
-          );
+        try {
+          const yFields = await restGetDoc('youtubeVideos', payload.videoId, idToken);
+          if (yFields) {
+            const linked = Array.isArray(yFields.linkedBhajanIds)
+              ? (yFields.linkedBhajanIds as string[])
+              : [];
+            const updatedLinked = Array.from(
+              new Set(
+                linked
+                  .filter((id) => id !== payload.sourceBhajanId)
+                  .concat(payload.targetBhajanId),
+              ),
+            );
+            await restPatchDoc(
+              'youtubeVideos',
+              payload.videoId,
+              { linkedBhajanIds: updatedLinked, lastVerifiedAt: now },
+              idToken,
+              ['linkedBhajanIds', 'lastVerifiedAt'],
+            );
+          }
+        } catch (err) {
+          logEvent('warn', {
+            route: 'curation-store.approve_merge',
+            errCode: 'youtube_provenance_update_failed',
+            docPath: `youtubeVideos/${payload.videoId}`,
+            message: err instanceof Error ? err.message : 'Failed updating youtubeVideos provenance',
+          });
         }
       }
 
@@ -1640,6 +1658,7 @@ export async function executeCurationAction(
         lyricsMissing: nextOv.lyricsMissing,
         isEstimated: false,
         matchStatus: 'verified',
+        matchCandidates: [],
         bhajamiOverride: true,
         updatedAt: now,
       };

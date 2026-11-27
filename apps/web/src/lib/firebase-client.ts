@@ -219,11 +219,11 @@ export function getFirebaseClientFirestore(): Firestore | null {
   return cachedDb;
 }
 
-export async function getCurrentFirebaseIdToken(): Promise<string | null> {
+export async function getCurrentFirebaseIdToken(forceRefresh = false): Promise<string | null> {
   const fb = getFirebaseClientAuth();
   if (!fb?.auth.currentUser) return null;
   try {
-    return await fb.auth.currentUser.getIdToken();
+    return await fb.auth.currentUser.getIdToken(forceRefresh);
   } catch {
     return null;
   }
