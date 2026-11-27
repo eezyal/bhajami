@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import {
   fetchCloudBhajanDetail,
@@ -13,7 +15,8 @@ import {
   resolveDefaultApiBase,
   resolvePlaybackAction,
 } from '../src/lib/search-and-playback';
-import { canonicalizePhrase, type BhajanIndexEntry } from '@bhajami/shared';
+import { SPLASH_STATUS_STEPS, SPLASH_WORDMARK_SEQUENCE } from '../src/lib/splash-sequence';
+import { canonicalizePhrase, pickStreamRecording, type BhajanIndexEntry } from '@bhajami/shared';
 
 test('cleanYouTubeDisplayTitle & parseFirestoreBhajan handle legacy YouTube and nullable fields safely', () => {
   assert.equal(
@@ -267,4 +270,64 @@ test('resolveDefaultApiBase selects env override, Web LAN host, Expo Go bundle h
   );
   assert.equal(resolveDefaultApiBase({ platformOs: 'android' }), 'http://10.0.2.2:3000');
   assert.equal(resolveDefaultApiBase({ platformOs: 'ios' }), 'http://localhost:3000');
+});
+
+test('parseFirestoreBhajan preserves defaultRecordingId and pickStreamRecording prioritizes default version', () => {
+  const plain = fromFirestoreFields({
+    title: { stringValue: 'Janani Krupa Karo Ambe' },
+    defaultRecordingId: { stringValue: 'yt_mQr8isPmdAc' },
+    recordings: {
+      arrayValue: {
+        values: [
+          {
+            mapValue: {
+              fields: {
+                id: { stringValue: 'yt_mQr8isPmdAc' },
+                label: { stringValue: 'Prasanthi Mandir Live' },
+                collection: { stringValue: 'youtube_prasanthi_mandir_live' },
+                youtubeVideoId: { stringValue: 'mQr8isPmdAc' },
+                isDefault: { booleanValue: true },
+              },
+            },
+          },
+          {
+            mapValue: {
+              fields: {
+                id: { stringValue: 'sair_ref_1' },
+                label: { stringValue: 'Sai Rhythms Reference Audio' },
+                collection: { stringValue: 'sairhythms_ref' },
+                externalUrl: { stringValue: 'https://example.com/ref.mp3' },
+              },
+            },
+          },
+        ],
+      },
+    },
+    lyricsSets: { arrayValue: { values: [] } },
+    glossary: { arrayValue: { values: [] } },
+  });
+
+  const parsed = parseFirestoreBhajan('janani-krupa-karo-ambe', plain);
+  assert.equal(parsed.defaultRecordingId, 'yt_mQr8isPmdAc');
+  assert.equal(parsed.recordings[0]?.isDefault, true);
+
+  const picked = pickStreamRecording(parsed, 'audio', null);
+  assert.equal(picked.defaultRecordingId, 'yt_mQr8isPmdAc');
+  assert.equal(picked.recording?.id, 'yt_mQr8isPmdAc');
+  assert.equal(picked.hasAudioOption, true);
+  assert.equal(picked.hasVideoOption, true);
+});
+
+test('BhajamiSplashOverlay exports multilingual BhaJamI wordmark sequence covering Sanskrit, English, Indian, and World scripts', () => {
+  const overlaySrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'apps/mobile/src/components/BhajamiSplashOverlay.tsx'),
+    'utf-8',
+  );
+  assert.match(overlaySrc, /SPLASH_WORDMARK_SEQUENCE/);
+  assert.ok(SPLASH_WORDMARK_SEQUENCE.length >= 90);
+  assert.ok(SPLASH_WORDMARK_SEQUENCE.some((e) => e.text === 'भजामि'));
+  assert.ok(SPLASH_WORDMARK_SEQUENCE.some((e) => e.kind === 'english' && e.text === 'BhaJamI'));
+  assert.ok(SPLASH_WORDMARK_SEQUENCE.some((e) => e.scriptLabel === 'Telugu' && e.text === 'భజామి'));
+  assert.ok(SPLASH_WORDMARK_SEQUENCE.some((e) => e.scriptLabel === 'Japanese' && e.text === 'バジャミ'));
+  assert.equal(SPLASH_STATUS_STEPS.length, 4);
 });

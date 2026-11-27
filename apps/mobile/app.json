@@ -6,16 +6,39 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "bhajami",
+    "splash": {
+      "backgroundColor": "#12101a",
+      "resizeMode": "contain"
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.saibhajanverse.bhajami"
+      "bundleIdentifier": "com.saibhajanverse.bhajami",
+      "buildNumber": "1",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
     },
     "android": {
-      "package": "com.saibhajanverse.bhajami"
+      "package": "com.saibhajanverse.bhajami",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#12101a"
+      }
     },
     "plugins": [
       "expo-av",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#12101a",
+          "dark": {
+            "backgroundColor": "#12101a"
+          }
+        }
+      ]
     ],
     "extra": {
       "firebaseProjectId": "saibhajanverse"

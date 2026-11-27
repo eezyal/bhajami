@@ -194,6 +194,10 @@ export function parseFirestoreBhajan(
     glossary: Array.isArray(fields.glossary) ? (fields.glossary as Bhajan['glossary']) : [],
     recordings: mergeRecordings(normalizedBaseRecs, addedRecs),
     addedRecordings: addedRecs.length ? addedRecs : undefined,
+    defaultRecordingId:
+      typeof fields.defaultRecordingId === 'string' && fields.defaultRecordingId.trim()
+        ? fields.defaultRecordingId.trim()
+        : null,
     sheetMusicUrl: typeof fields.sheetMusicUrl === 'string' ? fields.sheetMusicUrl : null,
     sourceUrl: typeof fields.sourceUrl === 'string' ? fields.sourceUrl : null,
     metadataSource:

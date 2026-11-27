@@ -14,7 +14,9 @@ import {
   View,
 } from 'react-native';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import { BhajamiSplashOverlay } from './src/components/BhajamiSplashOverlay';
 import {
   buildStreamQueue,
   computeSimilarBhajans,
@@ -70,6 +72,8 @@ const DEFAULT_API_BASE = resolveDefaultApiBase({
   platformOs: Platform.OS,
 });
 const MIN_LIKES_FOR_YOU = 3;
+
+void SplashScreen.preventAutoHideAsync().catch(() => {});
 
 interface ThemePalette {
   mode: 'light' | 'dark';
@@ -133,6 +137,9 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const apiBaseUrl = DEFAULT_API_BASE;
+  const [showSplashOverlay, setShowSplashOverlay] = useState(true);
+  const [bootHydrated, setBootHydrated] = useState(false);
+  const [bootProgress, setBootProgress] = useState(0.2);
 
   // Two-tier cloud index + lazy detail cache
   const [catalogIndex, setCatalogIndex] = useState<CatalogIndexPayload>(() =>
@@ -212,24 +219,48 @@ export default function App() {
   // Boot AsyncStorage preferences + cloud catalog index
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      const [storedLikes, storedTheme, storedMediaMode, cachedIndex] = await Promise.all([
-        loadStoredLikedIds(),
-        loadStoredThemeMode(),
-        loadStoredMediaMode(),
-        loadCachedCatalogIndex(),
-      ]);
-      if (cancelled) return;
-      if (storedLikes.length > 0) setLikedIds(storedLikes);
-      if (storedTheme) setThemeMode(storedTheme);
-      if (storedMediaMode) setStreamMediaMode(storedMediaMode);
-      if (cachedIndex && cachedIndex.version > 0 && cachedIndex.entries.length > 0) {
-        setCatalogIndex(cachedIndex);
+    void SplashScreen.hideAsync().catch(() => {});
+    const fallbackTimer = setTimeout(() => {
+      if (!cancelled) {
+        setBootProgress(1);
+        setBootHydrated(true);
       }
-      await refreshCloudCatalog();
+    }, 4500);
+
+    void (async () => {
+      try {
+        setBootProgress(0.38);
+        const [storedLikes, storedTheme, storedMediaMode, cachedIndex] = await Promise.all([
+          loadStoredLikedIds(),
+          loadStoredThemeMode(),
+          loadStoredMediaMode(),
+          loadCachedCatalogIndex(),
+        ]);
+        if (cancelled) return;
+        if (storedLikes.length > 0) setLikedIds(storedLikes);
+        if (storedTheme) setThemeMode(storedTheme);
+        if (storedMediaMode) setStreamMediaMode(storedMediaMode);
+        if (cachedIndex && cachedIndex.version > 0 && cachedIndex.entries.length > 0) {
+          setCatalogIndex(cachedIndex);
+        }
+        setBootProgress(0.75);
+        await refreshCloudCatalog();
+        if (!cancelled) {
+          setBootProgress(1);
+          setBootHydrated(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setBootProgress(1);
+          setBootHydrated(true);
+        }
+      } finally {
+        clearTimeout(fallbackTimer);
+      }
     })();
     return () => {
       cancelled = true;
+      clearTimeout(fallbackTimer);
     };
   }, [refreshCloudCatalog]);
 
@@ -1728,6 +1759,13 @@ export default function App() {
           );
         })}
       </View>
+
+      <BhajamiSplashOverlay
+        visible={showSplashOverlay}
+        ready={bootHydrated}
+        progress={bootProgress}
+        onFinish={() => setShowSplashOverlay(false)}
+      />
     </SafeAreaView>
   );
 }
