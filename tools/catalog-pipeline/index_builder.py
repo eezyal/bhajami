@@ -105,7 +105,9 @@ def project_bhajan_to_index_entry(
     """Project a full Bhajan record into a compact `BhajanIndexEntry` for client search."""
     metadata_source = _resolve_metadata_source(bhajan)
     title = _resolve_title(bhajan, metadata_source=metadata_source)
-    deity = str(bhajan.get("deity") or "").strip() or (crawler.infer_deity(title) if title else "")
+    deity = crawler.normalize_deity(str(bhajan.get("deity") or "").strip()) or (
+        crawler.infer_deity(title) if title else ""
+    )
     language = str(bhajan.get("language") or "").strip()
     raga_obj = bhajan.get("raga") or {}
     raga_name = str(raga_obj.get("name") or "").strip()
@@ -125,7 +127,12 @@ def project_bhajan_to_index_entry(
             first_two_lines = lines[:2]
             break
 
-    raw_search = " ".join(part for part in (title, deity, raga_name, " ".join(first_two_lines)) if part)
+    deity_search = (
+        f"{deity} Anjaneya"
+        if "hanuman" in deity.lower() and "anjaneya" not in title.lower()
+        else deity
+    )
+    raw_search = " ".join(part for part in (title, deity_search, raga_name, " ".join(first_two_lines)) if part)
     search_text = _clean_search_snippet(raw_search, max_len=240)
 
     token_set: list[str] = []

@@ -106,7 +106,7 @@ jobs:
           MAX_YT_VIDEOS: ${{ inputs.max_youtube_videos || '200' }}
           RUN_SSSMC: ${{ inputs.run_sssmediacentre || 'false' }}
           MAX_SSSMC_ITEMS: ${{ inputs.max_sssmediacentre_items || '200' }}
-          RUN_DUPLICATE_CHECK: ${{ inputs.run_duplicate_check || 'true' }}
+          RUN_DUPLICATE_CHECK: ${{ github.event_name == 'schedule' && 'true' || inputs.run_duplicate_check }}
           CLASSIFY_SPECIAL_TRACKS: ${{ inputs.classify_special_tracks || 'false' }}
         run: |
           if [ -z "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then

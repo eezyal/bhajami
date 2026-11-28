@@ -673,7 +673,12 @@ export async function getMergedCatalogWithCloud(): Promise<{
 
 function projectBhajanToIndexEntry(bhajan: Bhajan): BhajanIndexEntry {
   const firstTwoLines = bhajan.lyricsSets?.[0]?.lines?.slice(0, 2).join(' ') ?? '';
-  const searchRaw = [bhajan.title, bhajan.deity ?? '', bhajan.raga?.name ?? '', firstTwoLines]
+  const deityStr = bhajan.deity ?? '';
+  const deitySearch =
+    deityStr.toLowerCase().includes('hanuman') && !bhajan.title.toLowerCase().includes('anjaneya')
+      ? `${deityStr} Anjaneya`
+      : deityStr;
+  const searchRaw = [bhajan.title, deitySearch, bhajan.raga?.name ?? '', firstTwoLines]
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')

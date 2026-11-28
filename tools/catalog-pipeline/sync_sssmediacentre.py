@@ -343,7 +343,7 @@ def parse_sssmc_listen_html(html: str, page_url: str) -> dict[str, Any] | None:
         stem = re.sub(r"-[a-f0-9]{24}$", "", slug)
         title = re.sub(r"[-_]+", " ", stem).strip().title()
 
-    deity = crawler.clean_text(str(custom.get("deity") or "")) or crawler.infer_deity(title)
+    deity = crawler.normalize_deity(str(custom.get("deity") or "")) or crawler.infer_deity(title)
     raga_name = crawler.clean_text(str(custom.get("raga") or ""))
     tala_raw = crawler.clean_text(str(custom.get("tala") or ""))
     beat_display = tala_raw.title() if tala_raw.lower().endswith("beat") else tala_raw

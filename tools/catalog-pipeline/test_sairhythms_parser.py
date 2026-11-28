@@ -370,6 +370,14 @@ class IndexBuilderAndCleanupTests(unittest.TestCase):
                     scan_mock.assert_not_called()
                     self.assertEqual(payload["stats"]["totalLocalRecordings"], 0)
 
+    def test_normalize_deity_maps_anjaneya_to_hanuman(self) -> None:
+        self.assertEqual(crawler.normalize_deity("Anjaneya"), "Hanuman")
+        self.assertEqual(crawler.normalize_deity("Rama, Anjaneya"), "Rama, Hanuman")
+        self.assertEqual(crawler.normalize_deity("Anjaneya, Hanuman"), "Hanuman")
+        self.assertEqual(build_catalog.normalize_deity("Anjaneya"), "Hanuman")
+        self.assertEqual(build_catalog.normalize_deity("Rama, Anjaneya"), "Rama, Hanuman")
+        self.assertEqual(build_catalog.normalize_deity("Anjaneya, Hanuman"), "Hanuman")
+
 
 if __name__ == "__main__":
     unittest.main()

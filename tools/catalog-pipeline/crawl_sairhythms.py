@@ -165,6 +165,30 @@ def clean_text(raw: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+DEITY_ALIASES: dict[str, str] = {
+    "anjaneya": "Hanuman",
+}
+
+
+def normalize_deity(raw: str | None) -> str:
+    """Canonicalize comma/semicolon/slash-separated deity names (e.g. `Anjaneya` -> `Hanuman`)."""
+    cleaned = clean_text(raw)
+    if not cleaned:
+        return ""
+    parts: list[str] = []
+    seen_low: set[str] = set()
+    for seg in re.split(r"[,;/]+", cleaned):
+        tok = seg.strip()
+        if not tok:
+            continue
+        canonical = DEITY_ALIASES.get(tok.lower(), tok)
+        key = canonical.lower()
+        if key not in seen_low:
+            seen_low.add(key)
+            parts.append(canonical)
+    return ", ".join(parts)
+
+
 def infer_deity(title: str) -> str:
     """Infer deity from song title when the page metadata row is empty."""
     low = title.lower()
@@ -430,7 +454,10 @@ def parse_sairhythms_html(slug: str, html: str, crawled_at: str | None = None) -
         script = infer_script_kind(lines, label)
         lyrics_sets.append({"language": label, "script": script, "lines": lines})
 
-    deity = _extract_meta_row_bs4(soup, "deity-row") or str(super_song.get("deity") or "").strip() or infer_deity(title)
+    deity = (
+        normalize_deity(_extract_meta_row_bs4(soup, "deity-row") or str(super_song.get("deity") or ""))
+        or infer_deity(title)
+    )
     language = _extract_meta_row_bs4(soup, "language-row") or str(super_song.get("language") or "").strip()
     beat = _extract_meta_row_bs4(soup, "beat-row") or str(super_song.get("beat") or "").strip()
     level = _extract_meta_row_bs4(soup, "level-row") or str(super_song.get("level") or "").strip()

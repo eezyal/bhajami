@@ -418,4 +418,52 @@ describe('Similar-Raga Recommendations & Stream Queue Engine', () => {
     } as unknown as Bhajan;
     assert.equal(pickStreamRecording(withKaraokeFirst, 'audio').recording?.id, 'sair_vocal');
   });
+
+  it('matches both Hanuman and legacy Anjaneya deity entries under Hanuman filter', () => {
+    const deityEntries: BhajanIndexEntry[] = [
+      {
+        id: 'hanuman-1',
+        slug: 'hanuman-1',
+        title: 'Rama Lakshmana Janaki Jai Bolo Hanuman Ki',
+        deity: 'Hanuman',
+        searchText: 'rama lakshmana janaki hanuman',
+        phoneticTokens: ['rama', 'lakshmana', 'hanuman'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        recordingCount: 1,
+        metadataSource: 'sairhythms_verified',
+      },
+      {
+        id: 'anjaneya-1',
+        slug: 'anjaneya-1',
+        title: 'Anjana Nanda Veeram',
+        deity: 'Anjaneya',
+        searchText: 'anjana nanda veeram anjaneya',
+        phoneticTokens: ['anjana', 'nanda', 'veeram'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        recordingCount: 1,
+        metadataSource: 'sairhythms_verified',
+      },
+      {
+        id: 'shiva-1',
+        slug: 'shiva-1',
+        title: 'Shiva Shiva Shambho',
+        deity: 'Shiva',
+        searchText: 'shiva shambho',
+        phoneticTokens: ['shiva', 'shambho'],
+        lyricsMissing: false,
+        matchStatus: 'verified',
+        recordingCount: 1,
+        metadataSource: 'sairhythms_verified',
+      },
+    ];
+    const filtered = buildStreamQueue(deityEntries, {
+      mode: 'discovery',
+      likedIds: [],
+      deityFilter: 'Hanuman',
+      seed: 3,
+    });
+    assert.deepEqual(filtered.map((e) => e.id).sort(), ['anjaneya-1', 'hanuman-1']);
+  });
 });

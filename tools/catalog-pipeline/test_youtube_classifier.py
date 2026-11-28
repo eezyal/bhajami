@@ -502,6 +502,40 @@ class YouTubeClassifierAndTwoPassTests(unittest.TestCase):
         )
         self.assertEqual(stats["missingLyricsCount"], 1)
 
+    def test_deity_normalization_backfill_and_index_projection(self) -> None:
+        import classify_special_tracks as cst
+        import index_builder
+
+        doc = {
+            "id": "anjana-nanda-veeram",
+            "slug": "anjana-nanda-veeram",
+            "title": "Anjana Nanda Veeram",
+            "deity": "Anjaneya",
+            "lyricsMissing": False,
+            "matchStatus": "verified",
+            "lyricsSets": [
+                {
+                    "language": "Roman",
+                    "script": "roman",
+                    "lines": ["Anjana Nanda Veeram", "Hanumantha Shoora"],
+                }
+            ],
+            "recordings": [{"id": "sair_1", "collection": "sairhythms_ref", "label": "Ref"}],
+        }
+        classified = cst.classify_catalog_special_tracks([doc], now_iso="2026-11-27T17:00:00Z")
+        self.assertEqual(classified["counts"]["deitiesNormalized"], 1)
+        self.assertEqual(classified["counts"]["instrumental"], 0)
+        self.assertEqual(classified["counts"]["karaoke"], 0)
+        self.assertEqual(classified["counts"]["special"], 0)
+        patch = classified["patches"]["anjana-nanda-veeram"]
+        self.assertEqual(patch["deity"], "Hanuman")
+        self.assertNotIn("trackType", patch)
+        self.assertNotIn("lyricsMissing", patch)
+
+        projected = index_builder.project_bhajan_to_index_entry({**doc, "deity": "Anjaneya"})
+        self.assertEqual(projected["deity"], "Hanuman")
+        self.assertIn("Anjaneya", projected["searchText"])
+
 
 if __name__ == "__main__":
     unittest.main()

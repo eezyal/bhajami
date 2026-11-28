@@ -3,6 +3,21 @@ import type { Bhajan, BhajanIndexEntry, RecordingSource, TrackType } from './typ
 export type StreamModeKind = 'discovery' | 'for_you' | 'liked_only';
 export type StreamMediaMode = 'audio' | 'video';
 
+const DEITY_ALIASES: Record<string, string> = {
+  anjaneya: 'hanuman',
+};
+
+function normalizeDeityToken(raw?: string | null): string {
+  const low = (raw || '').trim().toLowerCase();
+  if (!low) return '';
+  return low
+    .split(/[,;/]+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => DEITY_ALIASES[part] ?? part)
+    .join(', ');
+}
+
 const SPECIAL_TRACK_TITLE_RE =
   /\b(?:karaoke|instrumental|nadasudha|nada\s+sudha|on\s+veena|violin\s+instrumental|flute\s+instrumental|sitar\s+instrumental|episode\s+\d+|sama\s*[-–]\s*\d+|ramayana\s+through\s+sai\s+bhajans|100\s+million\s+views|channel\s+launching|global\s+akhanda\s+bhajan|story\s+of\s+the\s+vibhuti\s+mantra|who\s+is\s+sri\s+sathya\s+sai)\b/i;
 
@@ -144,7 +159,7 @@ export function computeSimilarBhajans(
         display: prev?.display ?? (entry.ragaName || rKey),
       });
     }
-    const deity = entry.deity?.trim().toLowerCase();
+    const deity = normalizeDeityToken(entry.deity);
     if (deity && deity !== 'universal') {
       deityCounts.set(deity, (deityCounts.get(deity) ?? 0) + 1);
     }
@@ -198,7 +213,7 @@ export function computeSimilarBhajans(
       reasons.push(`Same Raga: ${matchedRaga}`);
     }
 
-    const deityLow = entry.deity?.trim().toLowerCase() || '';
+    const deityLow = normalizeDeityToken(entry.deity);
     const dCount = deityLow ? deityCounts.get(deityLow) ?? 0 : 0;
     if (dCount > 0) {
       score += 2.0 * (1 + Math.min(dCount - 1, 3) * 0.2);
@@ -300,7 +315,7 @@ export function buildStreamQueue(
   },
 ): BhajanIndexEntry[] {
   const rng = makeRng(options.seed);
-  const deityWanted = options.deityFilter?.trim().toLowerCase() || '';
+  const deityWanted = normalizeDeityToken(options.deityFilter);
   const ragaWanted = normalizeRagaKey(options.ragaFilter);
   const allowedTrackTypes =
     options.includeTrackTypes && options.includeTrackTypes.length > 0
@@ -316,7 +331,7 @@ export function buildStreamQueue(
       return false;
     }
     if (deityWanted && deityWanted !== 'all') {
-      if (!(e.deity || '').toLowerCase().includes(deityWanted)) return false;
+      if (!normalizeDeityToken(e.deity).includes(deityWanted)) return false;
     }
     if (ragaWanted) {
       if (normalizeRagaKey(e.ragaName) !== ragaWanted) return false;

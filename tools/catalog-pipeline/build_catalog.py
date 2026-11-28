@@ -98,6 +98,30 @@ def normalize_tokens(title: str) -> tuple[str, ...]:
     return tuple(tok for tok in cleaned.split() if tok)
 
 
+DEITY_ALIASES: dict[str, str] = {
+    "anjaneya": "Hanuman",
+}
+
+
+def normalize_deity(raw: str | None) -> str:
+    """Canonicalize comma/semicolon/slash-separated deity names (e.g. `Anjaneya` -> `Hanuman`)."""
+    cleaned = re.sub(r"\s+", " ", (raw or "").replace("\xa0", " ")).strip()
+    if not cleaned:
+        return ""
+    parts: list[str] = []
+    seen_low: set[str] = set()
+    for seg in re.split(r"[,;/]+", cleaned):
+        tok = seg.strip()
+        if not tok:
+            continue
+        canonical = DEITY_ALIASES.get(tok.lower(), tok)
+        key = canonical.lower()
+        if key not in seen_low:
+            seen_low.add(key)
+            parts.append(canonical)
+    return ", ".join(parts)
+
+
 def infer_deity(title: str) -> str:
     low = title.lower()
     for deity, keys in DEITY_KEYWORDS:
@@ -302,7 +326,7 @@ def parse_sairhythms_song(slug: str, html: str) -> dict[str, Any] | None:
         src = audio_m.group(1).strip()
         audio_url = src if src.startswith("http") else f"https://sairhythms.sathyasai.org{src}"
 
-    deity = parse_meta_row(html, "deity-row") or infer_deity(title)
+    deity = normalize_deity(parse_meta_row(html, "deity-row")) or infer_deity(title)
     language = parse_meta_row(html, "language-row") or ""
     beat = parse_meta_row(html, "beat-row") or ""
     level = parse_meta_row(html, "level-row") or ""

@@ -61,7 +61,7 @@ def _first_youtube_video_id(doc: Mapping[str, Any]) -> str:
     return ""
 
 
-def _should_inspect_doc(doc: Mapping[str, Any]) -> bool:
+def _needs_youtube_metadata(doc: Mapping[str, Any]) -> bool:
     title = str(doc.get("title") or "").strip()
     rec_labels = " ".join(
         str(r.get("label") or "")
@@ -76,6 +76,18 @@ def _should_inspect_doc(doc: Mapping[str, Any]) -> bool:
     if "|" in title:
         return True
     return False
+
+
+def _needs_deity_normalization(doc: Mapping[str, Any]) -> bool:
+    raw = str(doc.get("deity") or "").strip()
+    if not raw:
+        return False
+    normalized = crawler.normalize_deity(raw)
+    return bool(normalized and normalized != raw)
+
+
+def _should_inspect_doc(doc: Mapping[str, Any]) -> bool:
+    return _needs_youtube_metadata(doc) or _needs_deity_normalization(doc)
 
 
 def build_special_track_patch(
@@ -123,10 +135,15 @@ def build_special_track_patch(
             if not override_locked or _PLACEHOLDER_TITLE_RE.match(cur_title):
                 repaired_title = candidate
 
+    raw_deity = str(doc.get("deity") or "").strip()
+    normalized_deity = crawler.normalize_deity(raw_deity)
+    if normalized_deity and normalized_deity != raw_deity:
+        patch["deity"] = normalized_deity
+
     if repaired_title:
         patch["title"] = repaired_title
         deity = crawler.infer_deity(repaired_title)
-        if deity and not str(doc.get("deity") or "").strip():
+        if deity and not raw_deity and "deity" not in patch:
             patch["deity"] = deity
 
     # Recover lyrics from description if this is a vocal bhajan currently missing lyrics
@@ -175,13 +192,20 @@ def classify_catalog_special_tracks(
     ts_now = now_iso or yt_sync.utc_now_iso()
     yt_meta = youtube_meta_by_vid or {}
     patches_by_id: dict[str, dict[str, Any]] = {}
-    counts = {"instrumental": 0, "karaoke": 0, "special": 0, "titlesRepaired": 0, "lyricsRecovered": 0}
+    counts = {
+        "instrumental": 0,
+        "karaoke": 0,
+        "special": 0,
+        "titlesRepaired": 0,
+        "lyricsRecovered": 0,
+        "deitiesNormalized": 0,
+    }
 
     for doc in docs:
         doc_id = str(doc.get("id") or doc.get("slug") or "").strip()
         if not doc_id or not _should_inspect_doc(doc):
             continue
-        vid = _first_youtube_video_id(doc)
+        vid = _first_youtube_video_id(doc) if _needs_youtube_metadata(doc) else ""
         meta = yt_meta.get(vid, {}) if vid else {}
         patch = build_special_track_patch(
             doc,
@@ -199,6 +223,8 @@ def classify_catalog_special_tracks(
             counts["titlesRepaired"] += 1
         if "lyricsSets" in patch:
             counts["lyricsRecovered"] += 1
+        if "deity" in patch:
+            counts["deitiesNormalized"] += 1
 
     return {
         "scanned": len(docs),
@@ -217,7 +243,7 @@ def _collect_youtube_metadata(
     vid_targets: list[str] = []
     seen: set[str] = set()
     for doc in docs:
-        if not _should_inspect_doc(doc):
+        if not _needs_youtube_metadata(doc):
             continue
         vid = _first_youtube_video_id(doc)
         if vid and vid not in seen:
